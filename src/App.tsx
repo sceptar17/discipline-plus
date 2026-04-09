@@ -22,6 +22,7 @@ type State = { exercises: Exercise[]; schedule: Day[]; plans: Plan[]; runs: Run[
 type ExerciseForm = { name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
 type PlanForm = { name: string; focus: string }
 type Toast = { id: string; message: string }
+type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; note: string }
 type ConfirmState =
   | { kind: 'delete-run'; runId: string; title: string; body: string }
   | { kind: 'delete-plan'; planId: string; title: string; body: string }
@@ -428,6 +429,18 @@ function defaultResultForLog(log: Log, exercise: Exercise): Result {
   return { ...log.result, count: log.result.count ?? totalCount(log.target) }
 }
 
+function makeItemDraft(item: Item, exercise: Exercise): ItemDraft {
+  const progressMetric = effectiveProgressMetric(exercise, item.type)
+  return {
+    type: item.type,
+    target: clone(item.target),
+    timeText: item.result.timeText ?? (item.result.seconds !== undefined ? fmtSecs(item.result.seconds) : ''),
+    weightText: item.result.weight !== undefined ? String(item.result.weight) : (item.target.weight !== undefined ? String(item.target.weight) : ''),
+    countText: item.result.count !== undefined ? String(item.result.count) : (progressMetric === 'count' && item.type !== 'duration' && item.type !== 'for-time' ? String(totalCount(item.target)) : ''),
+    note: item.result.note ?? '',
+  }
+}
+
 async function ensureProfile(currentUser: User) {
   if (!supabase) return
   await supabase.from('profiles').upsert({
@@ -651,6 +664,7 @@ export default function App() {
   })
   const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('data')
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
+  const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, boolean>>({})
   const [expandedPlanItems, setExpandedPlanItems] = useState<Record<string, boolean>>({})
   const [draggedPlanDayId, setDraggedPlanDayId] = useState<string | null>(null)
@@ -975,12 +989,24 @@ export default function App() {
       scheduleSaveTimerRef.current = null
     }, 250)
   }, [persistScheduleData])
-  const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string }) => {
+  const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string; persistMode?: 'queued' | 'immediate' }) => {
     const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
     setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
     if (options?.selectedDate) {
       setSelected(options.selectedDate)
       setMonth(monthKey(options.selectedDate))
+    }
+    if (options?.persistMode === 'immediate') {
+      if (scheduleSaveTimerRef.current) {
+        window.clearTimeout(scheduleSaveTimerRef.current)
+        scheduleSaveTimerRef.current = null
+      }
+      const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs, state.plans)
+      if (!ok) {
+        pushToast('Could not save schedule.')
+        return false
+      }
+      return true
     }
     queueSchedulePersist(normalizedSchedule, nextRuns, nextLogs, state.plans)
     return true
@@ -1223,7 +1249,7 @@ export default function App() {
     await upsertDay(date, (d0) => ({ ...d0, skipped: false, items: [...d0.items, { id: id('it'), exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result', done: false, result: {} }] }))
   }
 
-  const updateItemOnDate = async (date: string, itemId: string, fx: (x: Item) => Item) => {
+  const updateItemOnDate = async (date: string, itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }) => {
     let updatedItem: Item | undefined
     const hasDay = state.schedule.some((x) => x.date === date)
     const schedule = hasDay
@@ -1240,9 +1266,9 @@ export default function App() {
         })
       : [...state.schedule, normalizeScheduleDay({ date, notes: '', rest: true, skipped: false, items: [] })]
     if (!updatedItem) return
-    await commitScheduleState(schedule, state.runs, syncLog(state.logs, date, updatedItem))
+    await commitScheduleState(schedule, state.runs, syncLog(state.logs, date, updatedItem), { persistMode: options?.persistMode })
   }
-  const updateItem = async (itemId: string, fx: (x: Item) => Item) => updateItemOnDate(selected, itemId, fx)
+  const updateItem = async (itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }) => updateItemOnDate(selected, itemId, fx, options)
   const removeItem = async (itemId: string) => {
     const nextSchedule = state.schedule.map((day0) => day0.date === selected ? normalizeScheduleDay({ ...day0, items: day0.items.filter((item) => item.id !== itemId) }) : day0)
     const nextLogs = state.logs.filter((entry) => entry.sourceItemId !== itemId)
@@ -1258,6 +1284,34 @@ export default function App() {
     setEditingLogId(null)
     setProgressEdit({})
   }
+  const saveItemDraft = async (item: Item, exercise: Exercise) => {
+    const draft = itemDrafts[item.id] ?? makeItemDraft(item, exercise)
+    const nextResult: Result = {}
+    const parsedSeconds = parseSecs(draft.timeText)
+    const parsedWeight = draft.weightText.trim() ? Number(draft.weightText) : undefined
+    const parsedCount = draft.countText.trim() ? Number(draft.countText) : undefined
+
+    if (draft.note.trim()) nextResult.note = draft.note.trim()
+    if (draft.timeText.trim()) {
+      nextResult.seconds = parsedSeconds
+      nextResult.timeText = parsedSeconds !== undefined ? fmtSecs(parsedSeconds) : draft.timeText
+    }
+    if (parsedWeight !== undefined && !Number.isNaN(parsedWeight)) nextResult.weight = parsedWeight
+    if (parsedCount !== undefined && !Number.isNaN(parsedCount)) nextResult.count = parsedCount
+
+    await updateItem(item.id, (x) => ({
+      ...x,
+      type: draft.type,
+      target: clone(draft.target),
+      result: nextResult,
+    }), { persistMode: 'immediate' })
+
+    setItemDrafts((current) => {
+      const next = { ...current }
+      delete next[item.id]
+      return next
+    })
+  }
   function loadWorkspaceState(next: State) {
     setState(next)
     const nextToday = key(new Date())
@@ -1271,6 +1325,7 @@ export default function App() {
     setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
     setApplyPlanId(null)
     setApplyStartDate(nextToday)
+    setItemDrafts({})
     cancelLogEdit()
   }
   const saveLogEdit = async () => {
@@ -1285,9 +1340,9 @@ export default function App() {
       note: progressEdit.note,
     }
     if (editingLog.sourceItemId) {
-      await updateItemOnDate(editingLog.date, editingLog.sourceItemId, (item) => ({ ...item, result: nextResult, done: true }))
+      await updateItemOnDate(editingLog.date, editingLog.sourceItemId, (item) => ({ ...item, result: nextResult, done: true }), { persistMode: 'immediate' })
     } else {
-      await commitScheduleState(state.schedule, state.runs, state.logs.map((entry) => entry.id === editingLog.id ? { ...entry, result: nextResult } : entry))
+      await commitScheduleState(state.schedule, state.runs, state.logs.map((entry) => entry.id === editingLog.id ? { ...entry, result: nextResult } : entry), { persistMode: 'immediate' })
     }
     pushToast(`${exercise.name} log updated.`)
     cancelLogEdit()
@@ -1652,12 +1707,18 @@ export default function App() {
             <div className="stack">{day.items.length === 0 && <div className="empty">No exercises yet.</div>}{day.items.map((item) => {
               const ex = exById[item.exerciseId]; if (!ex) return null
               const expanded = expandedItems[item.id] ?? false
-              const progressMetric = effectiveProgressMetric(ex, item.type)
-              const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => updateItem(item.id, (x) => ({ ...x, target: referenceTarget(derivedHistory, ex, r, x.type, x.target) }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, item.type)}</button>)
+              const draft = itemDrafts[item.id] ?? makeItemDraft(item, ex)
+              const progressMetric = effectiveProgressMetric(ex, draft.type)
+              const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target: referenceTarget(derivedHistory, ex, r, draft.type, draft.target) } }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, draft.type)}</button>)
               return <article key={item.id} className="card">
                 <div className="row top">
                   <button className={item.done ? 'ring done' : 'ring'} onClick={() => toggleDone(selected, item)} aria-label={`Mark ${ex.name} complete`}><span /></button>
-                  <button className="exerciseToggle" onClick={() => setExpandedItems((current) => ({ ...current, [item.id]: !expanded }))}>
+                  <button className="exerciseToggle" onClick={() => {
+                    if (!expanded) {
+                      setItemDrafts((current) => current[item.id] ? current : { ...current, [item.id]: makeItemDraft(item, ex) })
+                    }
+                    setExpandedItems((current) => ({ ...current, [item.id]: !expanded }))
+                  }}>
                     <div className="grow"><h3>{ex.name}</h3><p>{compact(item.type, item.target)}</p></div>
                     {expanded && <span>Hide</span>}
                   </button>
@@ -1665,21 +1726,28 @@ export default function App() {
                 </div>
                 {expanded && <>
                   <div className="detailCompactRow">
-                    <label className="field compactSelectField"><span>Target type</span><select value={item.type} onChange={(e) => updateItem(item.id, (x) => ({ ...x, type: e.target.value as TT, target: blank(e.target.value as TT), result: {} }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
+                    <label className="field compactSelectField"><span>Target type</span><select value={draft.type} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), type: e.target.value as TT, target: blank(e.target.value as TT), timeText: '', weightText: '', countText: '', note: draft.note } }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
                     <TargetEditor
-                      type={item.type}
-                      target={item.target}
+                      type={draft.type}
+                      target={draft.target}
                       layout="detail"
-                      onChange={(target) => updateItem(item.id, (x) => ({ ...x, target }))}
+                      onChange={(target) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target } }))}
                     />
                   </div>
                   <div className="detailCompactRow resultRow">
-                    {progressMetric === 'time' && <label className="field compactMetricField"><span>Time logged</span><input placeholder="mm:ss or minutes" value={item.result.timeText ?? (item.result.seconds !== undefined ? fmtSecs(item.result.seconds) : '')} onChange={(e) => updateItem(item.id, (x) => ({ ...x, result: { ...x.result, timeText: e.target.value, seconds: parseSecs(e.target.value) } }))} onBlur={() => updateItem(item.id, (x) => ({ ...x, result: { ...x.result, timeText: x.result.seconds !== undefined ? fmtSecs(x.result.seconds) : x.result.timeText } }))} /></label>}
-                    {progressMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="number" min={0} value={item.result.weight ?? item.target.weight ?? 0} onChange={(e) => updateItem(item.id, (x) => ({ ...x, result: { ...x.result, weight: Number(e.target.value) } }))} /></label>}
-                    {progressMetric === 'count' && item.type !== 'duration' && item.type !== 'for-time' && <label className="field compactMetricField"><span>Actual reps</span><input type="number" min={0} value={item.result.count ?? totalCount(item.target)} onChange={(e) => updateItem(item.id, (x) => ({ ...x, result: { ...x.result, count: Number(e.target.value) } }))} /></label>}
+                    {progressMetric === 'time' && <label className="field compactMetricField"><span>Time logged</span><input placeholder="mm:ss or minutes" value={draft.timeText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), timeText: e.target.value } }))} onBlur={() => setItemDrafts((current) => {
+                      const activeDraft = current[item.id] ?? makeItemDraft(item, ex)
+                      const parsed = parseSecs(activeDraft.timeText)
+                      return { ...current, [item.id]: { ...activeDraft, timeText: parsed !== undefined ? fmtSecs(parsed) : activeDraft.timeText } }
+                    })} /></label>}
+                    {progressMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="text" inputMode="decimal" placeholder="0" value={draft.weightText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), weightText: e.target.value } }))} /></label>}
+                    {progressMetric === 'count' && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual reps</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
                     <div className="targetActions">{metricActions}</div>
                   </div>
-                  <label className="field"><span>Completion note</span><input value={item.result.note ?? ''} onChange={(e) => updateItem(item.id, (x) => ({ ...x, result: { ...x.result, note: e.target.value } }))} placeholder="Optional note for this day" /></label>
+                  <label className="field"><span>Completion note</span><input value={draft.note} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), note: e.target.value } }))} placeholder="Optional note for this day" /></label>
+                  <div className="nav">
+                    <button className="primary" onClick={() => saveItemDraft(item, ex)}>Save</button>
+                  </div>
                 </>}
               </article>
             })}</div>
