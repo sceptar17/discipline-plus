@@ -599,8 +599,21 @@ function mergeStarterAmped(remotePlans: Plan[], starterPlans: Plan[]) {
   ))
 }
 
+function signedOutState(): State {
+  return ensureAmpedData({
+    exercises: [],
+    plans: [],
+    runs: [],
+    schedule: [],
+    logs: [],
+  })
+}
+
 export default function App() {
   const [state, setState] = useState<State>(() => {
+    if (hasSupabaseEnv) {
+      return signedOutState()
+    }
     const raw = localStorage.getItem(KEY)
     return ensureAmpedData(raw ? JSON.parse(raw) as LegacyState : seed())
   })
@@ -638,7 +651,10 @@ export default function App() {
   const dayDetailRef = useRef<HTMLElement | null>(null)
   const exerciseDetailRef = useRef<HTMLElement | null>(null)
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
-  useEffect(() => { localStorage.setItem(KEY, JSON.stringify(state)) }, [state])
+  useEffect(() => {
+    if (hasSupabaseEnv) return
+    localStorage.setItem(KEY, JSON.stringify(state))
+  }, [state])
   useEffect(() => {
     localScheduleRef.current = { schedule: state.schedule, runs: state.runs, logs: state.logs }
   }, [state.schedule, state.runs, state.logs])
@@ -654,11 +670,29 @@ export default function App() {
     }
 
     let active = true
+    const resetToSignedOutShell = () => {
+      const next = signedOutState()
+      setState(next)
+      const nextToday = key(new Date())
+      setSelected(nextToday)
+      setMonth(monthKey(nextToday))
+      setSelectedExerciseId(next.exercises[0]?.id ?? null)
+      setExerciseForm(next.exercises[0] ? formFromExercise(next.exercises[0]) : emptyExerciseForm())
+      setSelectedProgressExerciseId(next.exercises[0]?.id ?? null)
+      const nextPlan = next.plans.find((plan) => plan.name === 'Amped') ?? next.plans[0]
+      setSelectedPlanId(nextPlan?.id ?? null)
+      setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
+      setApplyPlanId(null)
+      setApplyStartDate(nextToday)
+      cancelLogEdit()
+    }
     supabase.auth.getSession().then(async ({ data }) => {
       if (!active) return
       setUser(data.session?.user ?? null)
       if (data.session?.user) {
         await ensureProfile(data.session.user)
+      } else {
+        resetToSignedOutShell()
       }
       if (active) {
         setAuthLoading(false)
@@ -670,6 +704,8 @@ export default function App() {
       setAuthLoading(false)
       if (nextSession?.user) {
         void ensureProfile(nextSession.user)
+      } else {
+        resetToSignedOutShell()
       }
     })
 
@@ -1124,6 +1160,7 @@ export default function App() {
   }
   const signOut = async () => {
     if (!supabase) return
+    loadWorkspaceState(signedOutState())
     const { error } = await supabase.auth.signOut()
     if (error) {
       pushToast('Could not sign out.')
@@ -1180,7 +1217,7 @@ export default function App() {
     setEditingLogId(null)
     setProgressEdit({})
   }
-  const loadWorkspaceState = (next: State) => {
+  function loadWorkspaceState(next: State) {
     setState(next)
     const nextToday = key(new Date())
     setSelected(nextToday)
