@@ -3,6 +3,8 @@
 .hero { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: 16px; padding: 14px 18px; background: var(--panel); }
 .simpleHero { grid-template-columns: 1fr; }
 .appHeaderRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.headerActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.authSummary { margin-top: 4px; }
 .today, .panel, .card, .empty { padding: 14px; }
 .today, .stack { display: flex; flex-direction: column; gap: 10px; }
 .nav, .chips, .wrap { display: flex; flex-wrap: wrap; gap: 8px; }

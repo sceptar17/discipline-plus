@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import type { User } from '@supabase/supabase-js'
 import './App.css'
+import { hasSupabaseEnv, supabase, supabaseUrl } from './lib/supabase'
 
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
 type RM = 'last-result' | 'personal-best'
@@ -411,6 +413,15 @@ function defaultResultForLog(log: Log, exercise: Exercise): Result {
   return { ...log.result, count: log.result.count ?? totalCount(log.target) }
 }
 
+async function ensureProfile(currentUser: User) {
+  if (!supabase) return
+  await supabase.from('profiles').upsert({
+    id: currentUser.id,
+    email: currentUser.email ?? null,
+    display_name: currentUser.user_metadata?.full_name ?? currentUser.user_metadata?.name ?? currentUser.email ?? 'Discipline + user',
+  })
+}
+
 export default function App() {
   const [state, setState] = useState<State>(() => {
     const raw = localStorage.getItem(KEY)
@@ -418,6 +429,8 @@ export default function App() {
   })
   const today = key(new Date())
   const [tab, setTab] = useState<'schedule' | 'exercises' | 'plans' | 'progress' | 'settings'>('schedule')
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(hasSupabaseEnv)
   const [selected, setSelected] = useState(today)
   const [month, setMonth] = useState(monthKey(today))
   const [scheduleView, setScheduleView] = useState<'calendar' | 'list'>('list')
@@ -453,6 +466,37 @@ export default function App() {
     const timer = window.setTimeout(() => setToasts((current) => current.slice(1)), 2800)
     return () => window.clearTimeout(timer)
   }, [toasts])
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false)
+      return
+    }
+
+    let active = true
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!active) return
+      setUser(data.session?.user ?? null)
+      if (data.session?.user) {
+        await ensureProfile(data.session.user)
+      }
+      if (active) {
+        setAuthLoading(false)
+      }
+    })
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setUser(nextSession?.user ?? null)
+      setAuthLoading(false)
+      if (nextSession?.user) {
+        void ensureProfile(nextSession.user)
+      }
+    })
+
+    return () => {
+      active = false
+      authListener.subscription.unsubscribe()
+    }
+  }, [])
 
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
   const sortedExercises = useMemo(() => [...state.exercises].sort((a, b) => a.name.localeCompare(b.name)), [state.exercises])
@@ -487,6 +531,27 @@ export default function App() {
   }
   const focusExerciseEditor = () => {
     window.setTimeout(() => exerciseDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
+  }
+  const signInWithGoogle = async () => {
+    if (!supabase) return
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+    if (error) {
+      pushToast('Google sign-in could not start.')
+    }
+  }
+  const signOut = async () => {
+    if (!supabase) return
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      pushToast('Could not sign out.')
+      return
+    }
+    pushToast('Signed out.')
   }
 
   const upsertDay = (date: string, fx: (d0: Day) => Day) => setState((s) => {
@@ -866,8 +931,13 @@ export default function App() {
           <div>
             <p className="eyebrow">Discipline +</p>
             <h1>Discipline +</h1>
+            {hasSupabaseEnv && <p className="mutedCopy authSummary">{authLoading ? 'Checking sign-in...' : user ? `Signed in as ${user.email ?? 'user'}` : 'Not signed in'}</p>}
           </div>
-          <button className={tab === 'settings' ? 'iconPill activeIconPill' : 'iconPill'} onClick={() => setTab('settings')} aria-label="Open settings">⚙</button>
+          <div className="headerActions">
+            {hasSupabaseEnv && !user && !authLoading && <button className="pill" onClick={signInWithGoogle}>Sign in</button>}
+            {hasSupabaseEnv && user && <button className="pill" onClick={signOut}>Sign out</button>}
+            <button className={tab === 'settings' ? 'iconPill activeIconPill' : 'iconPill'} onClick={() => setTab('settings')} aria-label="Open settings">⚙</button>
+          </div>
         </div>
       </header>
 
@@ -1274,6 +1344,11 @@ export default function App() {
           {settingsSection === 'integrations' && <div className="stack">
             <div><p className="eyebrow">Integrations</p><h2>Coming next</h2></div>
             <div className="card stack">
+              <strong>Supabase</strong>
+              <p>{hasSupabaseEnv ? `Connected in app config: ${supabaseUrl}` : 'Supabase environment variables are not configured in this build.'}</p>
+              <span className={hasSupabaseEnv ? 'status' : 'status warn'}>{hasSupabaseEnv ? 'Ready for schema + auth setup' : 'Missing env vars'}</span>
+            </div>
+            <div className="card stack">
               <strong>Calendar integration</strong>
               <p>Plan export and web-calendar sync can live here when we add it.</p>
             </div>
@@ -1283,7 +1358,15 @@ export default function App() {
             </div>
           </div>}
           {settingsSection === 'profile' && <div className="stack">
-            <div><p className="eyebrow">Profile</p><h2>Coming next</h2></div>
+            <div><p className="eyebrow">Profile</p><h2>Account</h2></div>
+            <div className="card stack">
+              <strong>Google sign-in</strong>
+              <p>{hasSupabaseEnv ? (authLoading ? 'Checking your current session.' : user ? `Signed in as ${user.email ?? 'user'}` : 'Ready for Google sign-in.') : 'Supabase is not configured for this build.'}</p>
+              {hasSupabaseEnv && <div className="nav">
+                {!user && !authLoading && <button className="primary" onClick={signInWithGoogle}>Continue with Google</button>}
+                {user && <button className="pill" onClick={signOut}>Sign out</button>}
+              </div>}
+            </div>
             <div className="card stack">
               <strong>Multiple users</strong>
               <p>If you add household profiles later, this section is ready for it.</p>
