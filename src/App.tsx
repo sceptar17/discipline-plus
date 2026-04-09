@@ -663,6 +663,7 @@ export default function App() {
   const exerciseDetailRef = useRef<HTMLElement | null>(null)
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
   const authUserRef = useRef<string | null>(null)
+  const scheduleSaveTimerRef = useRef<number | null>(null)
   useEffect(() => {
     if (hasSupabaseEnv) return
     localStorage.setItem(KEY, JSON.stringify(state))
@@ -960,6 +961,20 @@ export default function App() {
 
     return true
   }
+  const queueSchedulePersist = useCallback((nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], nextPlans: Plan[]) => {
+    if (scheduleSaveTimerRef.current) {
+      window.clearTimeout(scheduleSaveTimerRef.current)
+    }
+
+    scheduleSaveTimerRef.current = window.setTimeout(() => {
+      void persistScheduleData(nextSchedule, nextRuns, nextLogs, nextPlans).then((ok) => {
+        if (!ok) {
+          pushToast('Could not save schedule.')
+        }
+      })
+      scheduleSaveTimerRef.current = null
+    }, 250)
+  }, [persistScheduleData])
   const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string }) => {
     const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
     setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
@@ -967,13 +982,7 @@ export default function App() {
       setSelected(options.selectedDate)
       setMonth(monthKey(options.selectedDate))
     }
-
-    const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs, state.plans)
-    if (!ok) {
-      pushToast('Could not save schedule.')
-      return false
-    }
-
+    queueSchedulePersist(normalizedSchedule, nextRuns, nextLogs, state.plans)
     return true
   }
   const replaceWorkspaceState = async (next: State) => {
