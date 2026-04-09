@@ -59,6 +59,17 @@ const emptyExerciseForm = (): ExerciseForm => ({ name: '', category: CATEGORY_OP
 const formFromExercise = (exercise: Exercise): ExerciseForm => ({ name: exercise.name, category: exercise.category, equipment: exercise.equipment, notes: exercise.notes, defaultType: exercise.defaultType, allowed: [...exercise.allowed], target: clone(exercise.target), refs: [...exercise.refs], progressMetric: exercise.progressMetric })
 const emptyPlanForm = (): PlanForm => ({ name: '', focus: '' })
 const formFromPlan = (plan: Plan): PlanForm => ({ name: plan.name, focus: plan.focus })
+const progressMetricHint = (form: ExerciseForm) => {
+  if (form.progressMetric === 'time') {
+    if (form.defaultType === 'distance') return 'Distance is the target, and logged time is what gets tracked for progress.'
+    if (form.defaultType === 'for-time') return 'Fixed reps are the target, and finish time is what gets tracked for progress.'
+    return 'Timed exercises should usually use Duration as the default target type.'
+  }
+  if (form.progressMetric === 'weight') {
+    return 'Weight-based exercises can still use sets x reps, but the weight used becomes the progress value.'
+  }
+  return 'Count-based exercises compare reps or total volume over time.'
+}
 
 function seed(): State {
   const today = key(new Date())
@@ -739,7 +750,7 @@ export default function App() {
   const listDays = showPastDays ? [...pastDays, ...futureDays] : futureDays
   const visibleDays = scheduleView === 'list' ? listDays.slice(0, visibleListCount) : sortedDays
   const pushToast = (message: string) => setToasts((current) => [...current, { id: id('toast'), message }])
-  const persistExercisesCollection = async (nextExercises: Exercise[]) => {
+  const persistExercisesCollection = useCallback(async (nextExercises: Exercise[]) => {
     if (!supabase || !user) return true
 
     const client = supabase
@@ -767,7 +778,7 @@ export default function App() {
       if (error) return false
     }
     return true
-  }
+  }, [user])
   const persistPlans = useCallback(async (nextPlans: Plan[]) => {
     if (!supabase || !user) return true
 
@@ -836,6 +847,12 @@ export default function App() {
   }, [user])
   const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
     if (!supabase || !user) return true
+
+    const exercisesReady = await persistExercisesCollection(state.exercises)
+    if (!exercisesReady) return false
+
+    const plansReady = await persistPlans(availablePlans)
+    if (!plansReady) return false
 
     const client = supabase
     const validPlanIds = new Set(availablePlans.map((plan0) => plan0.id))
@@ -926,7 +943,7 @@ export default function App() {
     }
 
     return true
-  }, [state.plans, user])
+  }, [persistExercisesCollection, persistPlans, state.exercises, state.plans, user])
   const commitPlans = async (nextPlans: Plan[], nextSelectedPlanId?: string | null) => {
     const normalizedPlans = nextPlans.map((plan0) => ({ ...plan0, days: normalizePlanDaysData(plan0.days) }))
     setState((current) => ({ ...current, plans: normalizedPlans }))
@@ -1759,7 +1776,20 @@ export default function App() {
           </div>
           <label className="field"><span>Notes</span><textarea rows={3} value={exerciseForm.notes} onChange={(e) => setExerciseForm((x) => ({ ...x, notes: e.target.value }))} /></label>
           <label className="field"><span>Default target type</span><select value={exerciseForm.defaultType} onChange={(e) => setExerciseForm((x) => ({ ...x, defaultType: e.target.value as TT, allowed: Array.from(new Set([...x.allowed, e.target.value as TT])), target: blank(e.target.value as TT) }))}>{(Object.keys(TT_LABEL) as TT[]).map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
-          <label className="field"><span>Progress tracked by</span><select value={exerciseForm.progressMetric} onChange={(e) => setExerciseForm((x) => ({ ...x, progressMetric: e.target.value as PM }))}>{(Object.keys(PM_LABEL) as PM[]).map((metricOption) => <option key={metricOption} value={metricOption}>{PM_LABEL[metricOption]}</option>)}</select></label>
+          <label className="field"><span>Progress tracked by</span><select value={exerciseForm.progressMetric} onChange={(e) => setExerciseForm((x) => {
+            const nextMetric = e.target.value as PM
+            if (nextMetric === 'time' && !['duration', 'distance', 'for-time'].includes(x.defaultType)) {
+              return {
+                ...x,
+                progressMetric: nextMetric,
+                defaultType: 'duration',
+                allowed: Array.from(new Set([...x.allowed, 'duration'])),
+                target: blank('duration'),
+              }
+            }
+            return { ...x, progressMetric: nextMetric }
+          })}>{(Object.keys(PM_LABEL) as PM[]).map((metricOption) => <option key={metricOption} value={metricOption}>{PM_LABEL[metricOption]}</option>)}</select></label>
+          <p className="mutedCopy">{progressMetricHint(exerciseForm)}</p>
           <TargetEditor type={exerciseForm.defaultType} target={exerciseForm.target} onChange={(target) => setExerciseForm((x) => ({ ...x, target }))} />
           <div><span className="fieldLabel">Allowed target types</span><div className="chips">{(Object.keys(TT_LABEL) as TT[]).map((t) => { const on = exerciseForm.allowed.includes(t); return <button key={t} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, allowed: on ? (x.allowed.filter((y) => y !== t).length ? x.allowed.filter((y) => y !== t) : [x.defaultType]) : [...x.allowed, t] }))}>{TT_LABEL[t]}</button> })}</div></div>
           <div><span className="fieldLabel">Reference choices</span><div className="chips">{(Object.keys(RM_LABEL) as RM[]).map((r) => { const on = exerciseForm.refs.includes(r); return <button key={r} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, refs: on ? x.refs.filter((y) => y !== r) : [...x.refs, r] }))}>{RM_LABEL[r]}</button> })}</div></div>
