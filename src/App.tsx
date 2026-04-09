@@ -657,11 +657,8 @@ export default function App() {
   const [editingLogId, setEditingLogId] = useState<string | null>(null)
   const [progressEdit, setProgressEdit] = useState<Result>({})
   const [pendingImport, setPendingImport] = useState<LegacyState | null>(null)
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(state.plans.find((plan) => plan.name === 'Amped')?.id ?? state.plans[0]?.id ?? null)
-  const [planForm, setPlanForm] = useState<PlanForm>(() => {
-    const initialPlan = state.plans.find((plan) => plan.name === 'Amped') ?? state.plans[0]
-    return initialPlan ? formFromPlan(initialPlan) : emptyPlanForm()
-  })
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
+  const [planForm, setPlanForm] = useState<PlanForm>(() => emptyPlanForm())
   const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('data')
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
   const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
@@ -753,9 +750,16 @@ export default function App() {
   const starterPlans = useMemo(() => catalogPlansFromSlices(state.exercises, state.runs, state.schedule, state.logs), [state.exercises, state.runs, state.schedule, state.logs])
   const dayByDate = useMemo(() => Object.fromEntries(state.schedule.map((x) => [x.date, x])), [state.schedule])
   const derivedHistory = useMemo(() => [...state.logs].sort((a, b) => a.date.localeCompare(b.date)), [state.logs])
+  const progressExercises = useMemo(() => {
+    const completedIds = new Set(state.logs.filter((entry) => entry.done).map((entry) => entry.exerciseId))
+    return sortedExercises.filter((exercise) => completedIds.has(exercise.id))
+  }, [sortedExercises, state.logs])
+  useEffect(() => {
+    setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
+  }, [progressExercises])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? state.plans[0]
-  const progressExercise = state.exercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? state.exercises[0]
+  const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
   const todayDay = today ? normalizeScheduleDay(dayByDate[today] ?? { date: today, notes: '', rest: true, skipped: false, items: [] }) : undefined
   const todayItems = todayDay?.items ?? []
   const monthDays = useMemo(() => monthGrid(month), [month])
@@ -1220,7 +1224,7 @@ export default function App() {
           if (seedItemError || !active || authUserRef.current !== ownerId) return
         }
         setState((current) => ({ ...current, plans: nextPlans }))
-        setSelectedPlanId((current) => current ?? nextPlans.find((plan0) => plan0.name === 'Amped')?.id ?? nextPlans[0]?.id ?? null)
+        setSelectedPlanId((current) => current && nextPlans.some((plan0) => plan0.id === current) ? current : null)
         return
       }
 
@@ -1240,7 +1244,7 @@ export default function App() {
       }
       if (authUserRef.current !== ownerId) return
       setState((current) => ({ ...current, plans: repairedPlans }))
-      setSelectedPlanId((current) => current && repairedPlans.some((plan0) => plan0.id === current) ? current : repairedPlans.find((plan0) => plan0.name === 'Amped')?.id ?? repairedPlans[0]?.id ?? null)
+      setSelectedPlanId((current) => current && repairedPlans.some((plan0) => plan0.id === current) ? current : null)
     }
 
     void syncPlans()
@@ -1419,9 +1423,8 @@ export default function App() {
     setSelectedExerciseId(next.exercises[0]?.id ?? null)
     setExerciseForm(next.exercises[0] ? formFromExercise(next.exercises[0]) : emptyExerciseForm())
     setSelectedProgressExerciseId(next.exercises[0]?.id ?? null)
-    const nextPlan = next.plans.find((plan) => plan.name === 'Amped') ?? next.plans[0]
-    setSelectedPlanId(nextPlan?.id ?? null)
-    setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
+    setSelectedPlanId(null)
+    setPlanForm(emptyPlanForm())
     setApplyPlanId(null)
     setApplyStartDate(nextToday)
     setItemDrafts({})
@@ -2089,14 +2092,16 @@ export default function App() {
         </section>
       </main>}
 
-      {tab === 'progress' && progressExercise && <main className="grid">
+      {tab === 'progress' && <main className="grid">
         <section className="panel stack">
           <div><p className="eyebrow">Progress</p><h2>Select an exercise</h2></div>
           <div className="stack">
-            {sortedExercises.map((exercise) => <button key={exercise.id} className={selectedProgressExerciseId === exercise.id ? 'listItem activeItem' : 'listItem'} onClick={() => { setSelectedProgressExerciseId(exercise.id); cancelLogEdit() }}><strong>{exercise.name}</strong></button>)}
+            {progressExercises.length === 0 && <div className="empty">Complete an exercise to start tracking progress here.</div>}
+            {progressExercises.map((exercise) => <button key={exercise.id} className={selectedProgressExerciseId === exercise.id ? 'listItem activeItem' : 'listItem'} onClick={() => { setSelectedProgressExerciseId(exercise.id); cancelLogEdit() }}><strong>{exercise.name}</strong></button>)}
           </div>
         </section>
         <section className="panel stack">
+          {progressExercise ? <>
           <div>
             <p className="eyebrow">Exercise progress</p>
             <h2>{progressExercise.name}</h2>
@@ -2165,6 +2170,7 @@ export default function App() {
               </div>
             })}
           </div>
+          </> : <div className="empty">No completed exercise history yet.</div>}
         </section>
       </main>}
 
