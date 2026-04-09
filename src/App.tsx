@@ -651,10 +651,15 @@ export default function App() {
   const dayDetailRef = useRef<HTMLElement | null>(null)
   const exerciseDetailRef = useRef<HTMLElement | null>(null)
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
+  const authUserRef = useRef<string | null>(null)
   useEffect(() => {
     if (hasSupabaseEnv) return
     localStorage.setItem(KEY, JSON.stringify(state))
   }, [state])
+  useEffect(() => {
+    if (!hasSupabaseEnv) return
+    localStorage.removeItem(KEY)
+  }, [])
   useEffect(() => {
     localScheduleRef.current = { schedule: state.schedule, runs: state.runs, logs: state.logs }
   }, [state.schedule, state.runs, state.logs])
@@ -688,6 +693,7 @@ export default function App() {
     }
     supabase.auth.getSession().then(async ({ data }) => {
       if (!active) return
+      authUserRef.current = data.session?.user?.id ?? null
       setUser(data.session?.user ?? null)
       if (data.session?.user) {
         await ensureProfile(data.session.user)
@@ -700,6 +706,7 @@ export default function App() {
     })
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      authUserRef.current = nextSession?.user?.id ?? null
       setUser(nextSession?.user ?? null)
       setAuthLoading(false)
       if (nextSession?.user) {
@@ -969,6 +976,7 @@ export default function App() {
 
     let active = true
     const client = supabase
+    const ownerId = user.id
     const syncExercises = async () => {
       const { data, error } = await client
         .from('exercises')
@@ -976,7 +984,7 @@ export default function App() {
         .eq('user_id', user.id)
         .order('name', { ascending: true })
 
-      if (!active || error) return
+      if (!active || authUserRef.current !== ownerId || error) return
 
       if (!data || data.length === 0) {
         const payload = starterExercises.map((exercise) => ({
@@ -993,7 +1001,7 @@ export default function App() {
           progress_metric: exercise.progressMetric,
         }))
         const { error: seedError } = await client.from('exercises').upsert(payload)
-        if (seedError || !active) return
+        if (seedError || !active || authUserRef.current !== ownerId) return
         setState((current) => ({ ...current, exercises: starterExercises }))
         setSelectedExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
         setSelectedProgressExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
@@ -1001,6 +1009,7 @@ export default function App() {
       }
 
       const remoteExercises = data.map(mapExerciseRow)
+      if (authUserRef.current !== ownerId) return
       setState((current) => ({ ...current, exercises: remoteExercises }))
       setSelectedExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
       setSelectedProgressExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
@@ -1017,6 +1026,7 @@ export default function App() {
 
     let active = true
     const client = supabase
+    const ownerId = user.id
     const syncPlans = async () => {
       const { data: planRows, error: planError } = await client
         .from('plans')
@@ -1024,7 +1034,7 @@ export default function App() {
         .eq('user_id', user.id)
         .order('name', { ascending: true })
 
-      if (!active || planError) return
+      if (!active || authUserRef.current !== ownerId || planError) return
 
       if (!planRows || planRows.length === 0) {
         if (starterPlans.length === 0) return
@@ -1051,14 +1061,14 @@ export default function App() {
           name: plan0.name,
           focus: plan0.focus,
         })))
-        if (seedPlanError || !active) return
+        if (seedPlanError || !active || authUserRef.current !== ownerId) return
         if (dayRows.length) {
           const { error: seedDayError } = await client.from('plan_days').upsert(dayRows)
-          if (seedDayError || !active) return
+          if (seedDayError || !active || authUserRef.current !== ownerId) return
         }
         if (itemRows.length) {
           const { error: seedItemError } = await client.from('plan_items').upsert(itemRows)
-          if (seedItemError || !active) return
+          if (seedItemError || !active || authUserRef.current !== ownerId) return
         }
         setState((current) => ({ ...current, plans: nextPlans }))
         setSelectedPlanId((current) => current ?? nextPlans.find((plan0) => plan0.name === 'Amped')?.id ?? nextPlans[0]?.id ?? null)
@@ -1071,14 +1081,15 @@ export default function App() {
         client.from('plan_items').select('id, plan_day_id, exercise_id, type, target, ref').eq('user_id', user.id),
       ])
 
-      if (!active || dayError || itemError || !dayRows || !itemRows) return
+      if (!active || authUserRef.current !== ownerId || dayError || itemError || !dayRows || !itemRows) return
 
       const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
       const repairedPlans = mergeStarterAmped(remotePlans, starterPlans)
       if (repairedPlans !== remotePlans) {
         const repaired = await persistPlans(repairedPlans)
-        if (!repaired || !active) return
+        if (!repaired || !active || authUserRef.current !== ownerId) return
       }
+      if (authUserRef.current !== ownerId) return
       setState((current) => ({ ...current, plans: repairedPlans }))
       setSelectedPlanId((current) => current && repairedPlans.some((plan0) => plan0.id === current) ? current : repairedPlans.find((plan0) => plan0.name === 'Amped')?.id ?? repairedPlans[0]?.id ?? null)
     }
@@ -1094,6 +1105,7 @@ export default function App() {
 
     let active = true
     const client = supabase
+    const ownerId = user.id
     const syncSchedule = async () => {
       const [{ data: runRows, error: runError }, { data: dayRows, error: dayError }, { data: itemRows, error: itemError }, { data: logRows, error: logError }] = await Promise.all([
         client.from('runs').select('id, plan_id, start_date, name').eq('user_id', user.id).order('start_date', { ascending: true }),
@@ -1102,7 +1114,7 @@ export default function App() {
         client.from('logs').select('id, source_item_id, exercise_id, date, type, target, result').eq('user_id', user.id).order('date', { ascending: true }),
       ])
 
-      if (!active || runError || dayError || itemError || logError || !runRows || !dayRows || !itemRows || !logRows) return
+      if (!active || authUserRef.current !== ownerId || runError || dayError || itemError || logError || !runRows || !dayRows || !itemRows || !logRows) return
 
       if (runRows.length === 0 && dayRows.length === 0 && itemRows.length === 0 && logRows.length === 0) {
         const localSchedule = localScheduleRef.current.schedule
@@ -1110,7 +1122,7 @@ export default function App() {
         const localLogs = localScheduleRef.current.logs
         if (localSchedule.length === 0 && localRuns.length === 0 && localLogs.length === 0) return
         const seeded = await persistScheduleData(localSchedule, localRuns, localLogs)
-        if (!seeded || !active) return
+        if (!seeded || !active || authUserRef.current !== ownerId) return
         setState((current) => ({ ...current, schedule: localSchedule.map(normalizeScheduleDay), runs: localRuns, logs: localLogs }))
         return
       }
@@ -1118,6 +1130,7 @@ export default function App() {
       const remoteRuns = mapRunRows(runRows)
       const remoteSchedule = mapScheduleRows(dayRows, itemRows)
       const remoteLogs = mapLogRows(logRows)
+      if (authUserRef.current !== ownerId) return
       setState((current) => ({ ...current, runs: remoteRuns, schedule: remoteSchedule, logs: remoteLogs }))
     }
 
@@ -1160,6 +1173,8 @@ export default function App() {
   }
   const signOut = async () => {
     if (!supabase) return
+    authUserRef.current = null
+    setUser(null)
     loadWorkspaceState(signedOutState())
     const { error } = await supabase.auth.signOut()
     if (error) {
