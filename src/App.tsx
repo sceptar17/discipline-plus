@@ -575,6 +575,30 @@ function mapLogRows(rows: Array<{ id: string; source_item_id: string | null; exe
   }))
 }
 
+function planHasContent(plan: Plan) {
+  return plan.days.some((day0) => day0.items.length > 0)
+}
+
+function mergeStarterAmped(remotePlans: Plan[], starterPlans: Plan[]) {
+  const starterAmped = starterPlans.find((plan0) => plan0.name === 'Amped')
+  if (!starterAmped) return remotePlans
+
+  const remoteAmped = remotePlans.find((plan0) => plan0.name === 'Amped')
+  if (!remoteAmped) {
+    return [...remotePlans, starterAmped]
+  }
+
+  if (planHasContent(remoteAmped)) {
+    return remotePlans
+  }
+
+  return remotePlans.map((plan0) => (
+    plan0.id === remoteAmped.id
+      ? { ...starterAmped, id: remoteAmped.id }
+      : plan0
+  ))
+}
+
 export default function App() {
   const [state, setState] = useState<State>(() => {
     const raw = localStorage.getItem(KEY)
@@ -701,7 +725,7 @@ export default function App() {
     }
     return true
   }
-  const persistPlans = async (nextPlans: Plan[]) => {
+  const persistPlans = useCallback(async (nextPlans: Plan[]) => {
     if (!supabase || !user) return true
 
     const client = supabase
@@ -766,7 +790,7 @@ export default function App() {
     }
 
     return true
-  }
+  }, [user])
   const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
     if (!supabase || !user) return true
 
@@ -1012,8 +1036,13 @@ export default function App() {
       if (!active || dayError || itemError || !dayRows || !itemRows) return
 
       const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
-      setState((current) => ({ ...current, plans: remotePlans }))
-      setSelectedPlanId((current) => current && remotePlans.some((plan0) => plan0.id === current) ? current : remotePlans.find((plan0) => plan0.name === 'Amped')?.id ?? remotePlans[0]?.id ?? null)
+      const repairedPlans = mergeStarterAmped(remotePlans, starterPlans)
+      if (repairedPlans !== remotePlans) {
+        const repaired = await persistPlans(repairedPlans)
+        if (!repaired || !active) return
+      }
+      setState((current) => ({ ...current, plans: repairedPlans }))
+      setSelectedPlanId((current) => current && repairedPlans.some((plan0) => plan0.id === current) ? current : repairedPlans.find((plan0) => plan0.name === 'Amped')?.id ?? repairedPlans[0]?.id ?? null)
     }
 
     void syncPlans()
@@ -1021,7 +1050,7 @@ export default function App() {
     return () => {
       active = false
     }
-  }, [user, starterPlans, state.exercises.length])
+  }, [user, starterPlans, state.exercises.length, persistPlans])
   useEffect(() => {
     if (!supabase || !user || state.exercises.length === 0) return
 
