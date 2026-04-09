@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
 import './App.css'
 import { hasSupabaseEnv, supabase, supabaseUrl } from './lib/supabase'
@@ -123,6 +123,10 @@ function normalizeItem(item: LegacyItem): Item {
 
 function logIdForItem(itemId: string) {
   return `log-${itemId}`
+}
+
+function scheduleDayId(date: string) {
+  return `day-${date}`
 }
 
 function logFromItem(date: string, item: Item): Log {
@@ -422,6 +426,155 @@ async function ensureProfile(currentUser: User) {
   })
 }
 
+function catalogExercisesFromSlices(plans: Plan[], runs: Run[], schedule: Day[], logs: Log[]) {
+  return ensureAmpedData({
+    exercises: [],
+    plans,
+    runs,
+    schedule,
+    logs,
+  }).exercises
+}
+
+function catalogPlansFromSlices(exercises: Exercise[], runs: Run[], schedule: Day[], logs: Log[]) {
+  return ensureAmpedData({
+    exercises,
+    plans: [],
+    runs,
+    schedule,
+    logs,
+  }).plans
+}
+
+function normalizePlanDaysData(days: PlanDay[]) {
+  return days.map((day, index) => ({ ...day, label: `Day ${index + 1}`, rest: day.items.length === 0 }))
+}
+
+function mapExerciseRow(row: {
+  id: string
+  name: string
+  category: string
+  equipment: string
+  notes: string
+  default_type: string
+  allowed: unknown
+  target: unknown
+  refs: unknown
+  progress_metric: string
+}): Exercise {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    equipment: row.equipment,
+    notes: row.notes,
+    defaultType: row.default_type as TT,
+    allowed: Array.isArray(row.allowed) ? row.allowed as TT[] : ['count'],
+    target: typeof row.target === 'object' && row.target ? row.target as Target : {},
+    refs: Array.isArray(row.refs) ? row.refs as RM[] : ['last-result', 'personal-best'],
+    progressMetric: row.progress_metric as PM,
+  }
+}
+
+function mapPlanRows(
+  planRows: Array<{ id: string; name: string; focus: string }>,
+  dayRows: Array<{ id: string; plan_id: string; day_number: number; notes: string }>,
+  itemRows: Array<{ id: string; plan_day_id: string; exercise_id: string; type: string; target: unknown; ref: string }>,
+): Plan[] {
+  const itemsByDayId = new Map<string, PlanDay['items']>()
+  for (const row of itemRows) {
+    const nextItems = itemsByDayId.get(row.plan_day_id) ?? []
+    nextItems.push({
+      id: row.id,
+      exerciseId: row.exercise_id,
+      type: row.type as TT,
+      target: typeof row.target === 'object' && row.target ? row.target as Target : {},
+      ref: row.ref as RM,
+    })
+    itemsByDayId.set(row.plan_day_id, nextItems)
+  }
+
+  const daysByPlanId = new Map<string, PlanDay[]>()
+  for (const row of dayRows) {
+    const nextDays = daysByPlanId.get(row.plan_id) ?? []
+    nextDays.push({
+      id: row.id,
+      label: `Day ${row.day_number}`,
+      rest: false,
+      notes: row.notes,
+      items: itemsByDayId.get(row.id) ?? [],
+    })
+    daysByPlanId.set(row.plan_id, nextDays)
+  }
+
+  return planRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    focus: row.focus,
+    days: normalizePlanDaysData(
+      [...(daysByPlanId.get(row.id) ?? [])].sort((a, b) => {
+        const aNum = Number(a.label.replace('Day ', ''))
+        const bNum = Number(b.label.replace('Day ', ''))
+        return aNum - bNum
+      }),
+    ),
+  }))
+}
+
+function mapRunRows(rows: Array<{ id: string; plan_id: string | null; start_date: string; name: string }>): Run[] {
+  return rows.map((row) => ({
+    id: row.id,
+    planId: row.plan_id ?? '',
+    startDate: row.start_date,
+    name: row.name,
+  }))
+}
+
+function mapScheduleRows(
+  dayRows: Array<{ id: string; date: string; notes: string; skipped: boolean; run_id: string | null; day_no: number | null }>,
+  itemRows: Array<{ id: string; schedule_day_id: string; exercise_id: string; type: string; target: unknown; ref: string; done: boolean; result: unknown }>,
+): Day[] {
+  const itemsByDayId = new Map<string, Item[]>()
+  for (const row of itemRows) {
+    const nextItems = itemsByDayId.get(row.schedule_day_id) ?? []
+    nextItems.push({
+      id: row.id,
+      exerciseId: row.exercise_id,
+      type: row.type as TT,
+      target: typeof row.target === 'object' && row.target ? row.target as Target : {},
+      ref: row.ref as RM,
+      done: row.done,
+      result: typeof row.result === 'object' && row.result ? row.result as Result : {},
+    })
+    itemsByDayId.set(row.schedule_day_id, nextItems)
+  }
+
+  return dayRows
+    .map((row) => normalizeScheduleDay({
+      date: row.date,
+      notes: row.notes,
+      rest: false,
+      skipped: row.skipped,
+      runId: row.run_id ?? undefined,
+      dayNo: row.day_no ?? undefined,
+      items: itemsByDayId.get(row.id) ?? [],
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+function mapLogRows(rows: Array<{ id: string; source_item_id: string | null; exercise_id: string; date: string; type: string; target: unknown; result: unknown }>): Log[] {
+  return rows.map((row) => ({
+    id: row.id,
+    sourceItemId: row.source_item_id ?? undefined,
+    exerciseId: row.exercise_id,
+    date: row.date,
+    type: row.type as TT,
+    target: typeof row.target === 'object' && row.target ? row.target as Target : {},
+    result: typeof row.result === 'object' && row.result ? row.result as Result : {},
+    done: true,
+  }))
+}
+
 export default function App() {
   const [state, setState] = useState<State>(() => {
     const raw = localStorage.getItem(KEY)
@@ -460,7 +613,11 @@ export default function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const dayDetailRef = useRef<HTMLElement | null>(null)
   const exerciseDetailRef = useRef<HTMLElement | null>(null)
+  const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
   useEffect(() => { localStorage.setItem(KEY, JSON.stringify(state)) }, [state])
+  useEffect(() => {
+    localScheduleRef.current = { schedule: state.schedule, runs: state.runs, logs: state.logs }
+  }, [state.schedule, state.runs, state.logs])
   useEffect(() => {
     if (!toasts.length) return
     const timer = window.setTimeout(() => setToasts((current) => current.slice(1)), 2800)
@@ -497,9 +654,10 @@ export default function App() {
       authListener.subscription.unsubscribe()
     }
   }, [])
-
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
   const sortedExercises = useMemo(() => [...state.exercises].sort((a, b) => a.name.localeCompare(b.name)), [state.exercises])
+  const starterExercises = useMemo(() => catalogExercisesFromSlices(state.plans, state.runs, state.schedule, state.logs), [state.plans, state.runs, state.schedule, state.logs])
+  const starterPlans = useMemo(() => catalogPlansFromSlices(state.exercises, state.runs, state.schedule, state.logs), [state.exercises, state.runs, state.schedule, state.logs])
   const dayByDate = useMemo(() => Object.fromEntries(state.schedule.map((x) => [x.date, x])), [state.schedule])
   const derivedHistory = useMemo(() => [...state.logs].sort((a, b) => a.date.localeCompare(b.date)), [state.logs])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
@@ -514,6 +672,393 @@ export default function App() {
   const listDays = showPastDays ? [...pastDays, ...futureDays] : futureDays
   const visibleDays = scheduleView === 'list' ? listDays.slice(0, visibleListCount) : sortedDays
   const pushToast = (message: string) => setToasts((current) => [...current, { id: id('toast'), message }])
+  const persistExercisesCollection = async (nextExercises: Exercise[]) => {
+    if (!supabase || !user) return true
+
+    const client = supabase
+    const exerciseRows = nextExercises.map((exercise) => ({
+      id: exercise.id,
+      user_id: user.id,
+      name: exercise.name,
+      category: exercise.category,
+      equipment: exercise.equipment,
+      notes: exercise.notes,
+      default_type: exercise.defaultType,
+      allowed: exercise.allowed,
+      target: exercise.target,
+      refs: exercise.refs,
+      progress_metric: exercise.progressMetric,
+    }))
+    const { data: currentRows } = await client.from('exercises').select('id').eq('user_id', user.id)
+    const removedIds = (currentRows ?? []).map((row) => row.id).filter((id0) => !exerciseRows.some((row) => row.id === id0))
+    if (removedIds.length) {
+      const { error } = await client.from('exercises').delete().eq('user_id', user.id).in('id', removedIds)
+      if (error) return false
+    }
+    if (exerciseRows.length) {
+      const { error } = await client.from('exercises').upsert(exerciseRows)
+      if (error) return false
+    }
+    return true
+  }
+  const persistPlans = async (nextPlans: Plan[]) => {
+    if (!supabase || !user) return true
+
+    const client = supabase
+    const planRows = nextPlans.map((plan0) => ({
+      id: plan0.id,
+      user_id: user.id,
+      name: plan0.name,
+      focus: plan0.focus,
+    }))
+    const dayRows = nextPlans.flatMap((plan0) => normalizePlanDaysData(plan0.days).map((day0, index) => ({
+      id: day0.id,
+      user_id: user.id,
+      plan_id: plan0.id,
+      day_number: index + 1,
+      notes: day0.notes ?? '',
+    })))
+    const itemRows = nextPlans.flatMap((plan0) => normalizePlanDaysData(plan0.days).flatMap((day0) => day0.items.map((item) => ({
+      id: item.id,
+      user_id: user.id,
+      plan_day_id: day0.id,
+      exercise_id: item.exerciseId,
+      type: item.type,
+      target: item.target,
+      ref: item.ref,
+    }))))
+
+    const [{ data: currentPlans }, { data: currentDays }, { data: currentItems }] = await Promise.all([
+      client.from('plans').select('id').eq('user_id', user.id),
+      client.from('plan_days').select('id').eq('user_id', user.id),
+      client.from('plan_items').select('id').eq('user_id', user.id),
+    ])
+
+    const removedItemIds = (currentItems ?? []).map((row) => row.id).filter((id0) => !itemRows.some((row) => row.id === id0))
+    if (removedItemIds.length) {
+      const { error } = await client.from('plan_items').delete().eq('user_id', user.id).in('id', removedItemIds)
+      if (error) return false
+    }
+
+    const removedDayIds = (currentDays ?? []).map((row) => row.id).filter((id0) => !dayRows.some((row) => row.id === id0))
+    if (removedDayIds.length) {
+      const { error } = await client.from('plan_days').delete().eq('user_id', user.id).in('id', removedDayIds)
+      if (error) return false
+    }
+
+    const removedPlanIds = (currentPlans ?? []).map((row) => row.id).filter((id0) => !planRows.some((row) => row.id === id0))
+    if (removedPlanIds.length) {
+      const { error } = await client.from('plans').delete().eq('user_id', user.id).in('id', removedPlanIds)
+      if (error) return false
+    }
+
+    if (planRows.length) {
+      const { error } = await client.from('plans').upsert(planRows)
+      if (error) return false
+    }
+    if (dayRows.length) {
+      const { error } = await client.from('plan_days').upsert(dayRows)
+      if (error) return false
+    }
+    if (itemRows.length) {
+      const { error } = await client.from('plan_items').upsert(itemRows)
+      if (error) return false
+    }
+
+    return true
+  }
+  const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[]) => {
+    if (!supabase || !user) return true
+
+    const client = supabase
+    const runRows = nextRuns.map((run) => ({
+      id: run.id,
+      user_id: user.id,
+      plan_id: run.planId || null,
+      start_date: run.startDate,
+      name: run.name,
+    }))
+    const dayRows = nextSchedule.map((day0) => ({
+      id: scheduleDayId(day0.date),
+      user_id: user.id,
+      date: day0.date,
+      notes: day0.notes,
+      skipped: day0.skipped,
+      run_id: day0.runId ?? null,
+      day_no: day0.dayNo ?? null,
+    }))
+    const itemRows = nextSchedule.flatMap((day0) => day0.items.map((item) => ({
+      id: item.id,
+      user_id: user.id,
+      schedule_day_id: scheduleDayId(day0.date),
+      exercise_id: item.exerciseId,
+      type: item.type,
+      target: item.target,
+      ref: item.ref,
+      done: item.done,
+      result: item.result,
+    })))
+    const logRows = nextLogs.map((entry) => ({
+      id: entry.id,
+      user_id: user.id,
+      source_item_id: entry.sourceItemId ?? null,
+      exercise_id: entry.exerciseId,
+      date: entry.date,
+      type: entry.type,
+      target: entry.target,
+      result: entry.result,
+    }))
+
+    const [{ data: currentRuns }, { data: currentDays }, { data: currentItems }, { data: currentLogs }] = await Promise.all([
+      client.from('runs').select('id').eq('user_id', user.id),
+      client.from('schedule_days').select('id').eq('user_id', user.id),
+      client.from('schedule_items').select('id').eq('user_id', user.id),
+      client.from('logs').select('id').eq('user_id', user.id),
+    ])
+
+    const removedLogIds = (currentLogs ?? []).map((row) => row.id).filter((id0) => !logRows.some((row) => row.id === id0))
+    if (removedLogIds.length) {
+      const { error } = await client.from('logs').delete().eq('user_id', user.id).in('id', removedLogIds)
+      if (error) return false
+    }
+
+    const removedItemIds = (currentItems ?? []).map((row) => row.id).filter((id0) => !itemRows.some((row) => row.id === id0))
+    if (removedItemIds.length) {
+      const { error } = await client.from('schedule_items').delete().eq('user_id', user.id).in('id', removedItemIds)
+      if (error) return false
+    }
+
+    const removedDayIds = (currentDays ?? []).map((row) => row.id).filter((id0) => !dayRows.some((row) => row.id === id0))
+    if (removedDayIds.length) {
+      const { error } = await client.from('schedule_days').delete().eq('user_id', user.id).in('id', removedDayIds)
+      if (error) return false
+    }
+
+    const removedRunIds = (currentRuns ?? []).map((row) => row.id).filter((id0) => !runRows.some((row) => row.id === id0))
+    if (removedRunIds.length) {
+      const { error } = await client.from('runs').delete().eq('user_id', user.id).in('id', removedRunIds)
+      if (error) return false
+    }
+
+    if (runRows.length) {
+      const { error } = await client.from('runs').upsert(runRows)
+      if (error) return false
+    }
+    if (dayRows.length) {
+      const { error } = await client.from('schedule_days').upsert(dayRows)
+      if (error) return false
+    }
+    if (itemRows.length) {
+      const { error } = await client.from('schedule_items').upsert(itemRows)
+      if (error) return false
+    }
+    if (logRows.length) {
+      const { error } = await client.from('logs').upsert(logRows)
+      if (error) return false
+    }
+
+    return true
+  }, [user])
+  const commitPlans = async (nextPlans: Plan[], nextSelectedPlanId?: string | null) => {
+    const normalizedPlans = nextPlans.map((plan0) => ({ ...plan0, days: normalizePlanDaysData(plan0.days) }))
+    const ok = await persistPlans(normalizedPlans)
+    if (!ok) {
+      pushToast('Could not save plans.')
+      return false
+    }
+
+    setState((current) => ({ ...current, plans: normalizedPlans }))
+    const resolvedPlanId = nextSelectedPlanId === undefined ? selectedPlanId : nextSelectedPlanId
+    const nextPlan = normalizedPlans.find((plan0) => plan0.id === resolvedPlanId) ?? normalizedPlans.find((plan0) => plan0.name === 'Amped') ?? normalizedPlans[0] ?? null
+    setSelectedPlanId(nextPlan?.id ?? null)
+    setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
+    return true
+  }
+  const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string }) => {
+    const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
+    const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs)
+    if (!ok) {
+      pushToast('Could not save schedule.')
+      return false
+    }
+
+    setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
+    if (options?.selectedDate) {
+      setSelected(options.selectedDate)
+      setMonth(monthKey(options.selectedDate))
+    }
+    return true
+  }
+  const replaceWorkspaceState = async (next: State) => {
+    const normalized = ensureAmpedData(next)
+    const exercisesOk = await persistExercisesCollection(normalized.exercises)
+    const plansOk = exercisesOk ? await persistPlans(normalized.plans) : false
+    const scheduleOk = plansOk ? await persistScheduleData(normalized.schedule, normalized.runs, normalized.logs) : false
+    if (!exercisesOk || !plansOk || !scheduleOk) {
+      pushToast('Could not replace app data.')
+      return false
+    }
+    loadWorkspaceState(normalized)
+    return true
+  }
+  useEffect(() => {
+    if (!supabase || !user) return
+
+    let active = true
+    const client = supabase
+    const syncExercises = async () => {
+      const { data, error } = await client
+        .from('exercises')
+        .select('id, name, category, equipment, notes, default_type, allowed, target, refs, progress_metric')
+        .eq('user_id', user.id)
+        .order('name', { ascending: true })
+
+      if (!active || error) return
+
+      if (!data || data.length === 0) {
+        const payload = starterExercises.map((exercise) => ({
+          id: exercise.id,
+          user_id: user.id,
+          name: exercise.name,
+          category: exercise.category,
+          equipment: exercise.equipment,
+          notes: exercise.notes,
+          default_type: exercise.defaultType,
+          allowed: exercise.allowed,
+          target: exercise.target,
+          refs: exercise.refs,
+          progress_metric: exercise.progressMetric,
+        }))
+        const { error: seedError } = await client.from('exercises').upsert(payload)
+        if (seedError || !active) return
+        setState((current) => ({ ...current, exercises: starterExercises }))
+        setSelectedExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
+        setSelectedProgressExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
+        return
+      }
+
+      const remoteExercises = data.map(mapExerciseRow)
+      setState((current) => ({ ...current, exercises: remoteExercises }))
+      setSelectedExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
+      setSelectedProgressExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
+    }
+
+    void syncExercises()
+
+    return () => {
+      active = false
+    }
+  }, [user, starterExercises])
+  useEffect(() => {
+    if (!supabase || !user || state.exercises.length === 0) return
+
+    let active = true
+    const client = supabase
+    const syncPlans = async () => {
+      const { data: planRows, error: planError } = await client
+        .from('plans')
+        .select('id, name, focus')
+        .eq('user_id', user.id)
+        .order('name', { ascending: true })
+
+      if (!active || planError) return
+
+      if (!planRows || planRows.length === 0) {
+        if (starterPlans.length === 0) return
+        const nextPlans = starterPlans
+        const dayRows = nextPlans.flatMap((plan0) => plan0.days.map((day0, index) => ({
+          id: day0.id,
+          user_id: user.id,
+          plan_id: plan0.id,
+          day_number: index + 1,
+          notes: day0.notes ?? '',
+        })))
+        const itemRows = nextPlans.flatMap((plan0) => plan0.days.flatMap((day0) => day0.items.map((item) => ({
+          id: item.id,
+          user_id: user.id,
+          plan_day_id: day0.id,
+          exercise_id: item.exerciseId,
+          type: item.type,
+          target: item.target,
+          ref: item.ref,
+        }))))
+        const { error: seedPlanError } = await client.from('plans').upsert(nextPlans.map((plan0) => ({
+          id: plan0.id,
+          user_id: user.id,
+          name: plan0.name,
+          focus: plan0.focus,
+        })))
+        if (seedPlanError || !active) return
+        if (dayRows.length) {
+          const { error: seedDayError } = await client.from('plan_days').upsert(dayRows)
+          if (seedDayError || !active) return
+        }
+        if (itemRows.length) {
+          const { error: seedItemError } = await client.from('plan_items').upsert(itemRows)
+          if (seedItemError || !active) return
+        }
+        setState((current) => ({ ...current, plans: nextPlans }))
+        setSelectedPlanId((current) => current ?? nextPlans.find((plan0) => plan0.name === 'Amped')?.id ?? nextPlans[0]?.id ?? null)
+        return
+      }
+
+      const planIds = planRows.map((row) => row.id)
+      const [{ data: dayRows, error: dayError }, { data: itemRows, error: itemError }] = await Promise.all([
+        client.from('plan_days').select('id, plan_id, day_number, notes').eq('user_id', user.id).in('plan_id', planIds).order('day_number', { ascending: true }),
+        client.from('plan_items').select('id, plan_day_id, exercise_id, type, target, ref').eq('user_id', user.id),
+      ])
+
+      if (!active || dayError || itemError || !dayRows || !itemRows) return
+
+      const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
+      setState((current) => ({ ...current, plans: remotePlans }))
+      setSelectedPlanId((current) => current && remotePlans.some((plan0) => plan0.id === current) ? current : remotePlans.find((plan0) => plan0.name === 'Amped')?.id ?? remotePlans[0]?.id ?? null)
+    }
+
+    void syncPlans()
+
+    return () => {
+      active = false
+    }
+  }, [user, starterPlans, state.exercises.length])
+  useEffect(() => {
+    if (!supabase || !user || state.exercises.length === 0) return
+
+    let active = true
+    const client = supabase
+    const syncSchedule = async () => {
+      const [{ data: runRows, error: runError }, { data: dayRows, error: dayError }, { data: itemRows, error: itemError }, { data: logRows, error: logError }] = await Promise.all([
+        client.from('runs').select('id, plan_id, start_date, name').eq('user_id', user.id).order('start_date', { ascending: true }),
+        client.from('schedule_days').select('id, date, notes, skipped, run_id, day_no').eq('user_id', user.id).order('date', { ascending: true }),
+        client.from('schedule_items').select('id, schedule_day_id, exercise_id, type, target, ref, done, result').eq('user_id', user.id),
+        client.from('logs').select('id, source_item_id, exercise_id, date, type, target, result').eq('user_id', user.id).order('date', { ascending: true }),
+      ])
+
+      if (!active || runError || dayError || itemError || logError || !runRows || !dayRows || !itemRows || !logRows) return
+
+      if (runRows.length === 0 && dayRows.length === 0 && itemRows.length === 0 && logRows.length === 0) {
+        const localSchedule = localScheduleRef.current.schedule
+        const localRuns = localScheduleRef.current.runs
+        const localLogs = localScheduleRef.current.logs
+        if (localSchedule.length === 0 && localRuns.length === 0 && localLogs.length === 0) return
+        const seeded = await persistScheduleData(localSchedule, localRuns, localLogs)
+        if (!seeded || !active) return
+        setState((current) => ({ ...current, schedule: localSchedule.map(normalizeScheduleDay), runs: localRuns, logs: localLogs }))
+        return
+      }
+
+      const remoteRuns = mapRunRows(runRows)
+      const remoteSchedule = mapScheduleRows(dayRows, itemRows)
+      const remoteLogs = mapLogRows(logRows)
+      setState((current) => ({ ...current, runs: remoteRuns, schedule: remoteSchedule, logs: remoteLogs }))
+    }
+
+    void syncSchedule()
+
+    return () => {
+      active = false
+    }
+  }, [user, state.exercises.length, persistScheduleData])
   const progressHistory = useMemo(() => {
     if (!progressExercise) return []
     return [...derivedHistory]
@@ -532,6 +1077,7 @@ export default function App() {
   const focusExerciseEditor = () => {
     window.setTimeout(() => exerciseDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
   }
+  const userAvatar = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null
   const signInWithGoogle = async () => {
     if (!supabase) return
     const { error } = await supabase.auth.signInWithOAuth({
@@ -554,43 +1100,44 @@ export default function App() {
     pushToast('Signed out.')
   }
 
-  const upsertDay = (date: string, fx: (d0: Day) => Day) => setState((s) => {
-    const base = s.schedule.find((x) => x.date === date) ?? { date, notes: '', rest: true, skipped: false, items: [] }
+  const upsertDay = async (date: string, fx: (d0: Day) => Day) => {
+    const base = state.schedule.find((x) => x.date === date) ?? { date, notes: '', rest: true, skipped: false, items: [] }
     const next = normalizeScheduleDay(fx(base))
-    return { ...s, schedule: s.schedule.some((x) => x.date === date) ? s.schedule.map((x) => x.date === date ? next : x) : [...s.schedule, next] }
-  })
-
-  const addExerciseToDay = (exerciseId: string, date: string) => {
-    const ex = exById[exerciseId]
-    if (!ex) return
-    upsertDay(date, (d0) => ({ ...d0, skipped: false, items: [...d0.items, { id: id('it'), exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result', done: false, result: {} }] }))
+    const nextSchedule = state.schedule.some((x) => x.date === date) ? state.schedule.map((x) => x.date === date ? next : x) : [...state.schedule, next]
+    await commitScheduleState(nextSchedule, state.runs, state.logs)
   }
 
-  const updateItemOnDate = (date: string, itemId: string, fx: (x: Item) => Item) => setState((s) => {
+  const addExerciseToDay = async (exerciseId: string, date: string) => {
+    const ex = exById[exerciseId]
+    if (!ex) return
+    await upsertDay(date, (d0) => ({ ...d0, skipped: false, items: [...d0.items, { id: id('it'), exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result', done: false, result: {} }] }))
+  }
+
+  const updateItemOnDate = async (date: string, itemId: string, fx: (x: Item) => Item) => {
     let updatedItem: Item | undefined
-    const hasDay = s.schedule.some((x) => x.date === date)
+    const hasDay = state.schedule.some((x) => x.date === date)
     const schedule = hasDay
-      ? s.schedule.map((day) => {
-          if (day.date !== date) return day
+      ? state.schedule.map((day0) => {
+          if (day0.date !== date) return day0
           return normalizeScheduleDay({
-            ...day,
-            items: day.items.map((item) => {
+            ...day0,
+            items: day0.items.map((item) => {
               if (item.id !== itemId) return item
               updatedItem = fx(item)
               return updatedItem
             }),
           })
         })
-      : [...s.schedule, normalizeScheduleDay({ date, notes: '', rest: true, skipped: false, items: [] })]
-    if (!updatedItem) return { ...s, schedule }
-    return { ...s, schedule, logs: syncLog(s.logs, date, updatedItem) }
-  })
-  const updateItem = (itemId: string, fx: (x: Item) => Item) => updateItemOnDate(selected, itemId, fx)
-  const removeItem = (itemId: string) => setState((s) => ({
-    ...s,
-    schedule: s.schedule.map((day0) => day0.date === selected ? normalizeScheduleDay({ ...day0, items: day0.items.filter((item) => item.id !== itemId) }) : day0),
-    logs: s.logs.filter((entry) => entry.sourceItemId !== itemId),
-  }))
+      : [...state.schedule, normalizeScheduleDay({ date, notes: '', rest: true, skipped: false, items: [] })]
+    if (!updatedItem) return
+    await commitScheduleState(schedule, state.runs, syncLog(state.logs, date, updatedItem))
+  }
+  const updateItem = async (itemId: string, fx: (x: Item) => Item) => updateItemOnDate(selected, itemId, fx)
+  const removeItem = async (itemId: string) => {
+    const nextSchedule = state.schedule.map((day0) => day0.date === selected ? normalizeScheduleDay({ ...day0, items: day0.items.filter((item) => item.id !== itemId) }) : day0)
+    const nextLogs = state.logs.filter((entry) => entry.sourceItemId !== itemId)
+    await commitScheduleState(nextSchedule, state.runs, nextLogs)
+  }
   const beginLogEdit = (log: Log) => {
     const exercise = exById[log.exerciseId]
     if (!exercise) return
@@ -616,7 +1163,7 @@ export default function App() {
     setApplyStartDate(nextToday)
     cancelLogEdit()
   }
-  const saveLogEdit = () => {
+  const saveLogEdit = async () => {
     if (!editingLog) return
     const exercise = exById[editingLog.exerciseId]
     if (!exercise) return
@@ -628,9 +1175,9 @@ export default function App() {
       note: progressEdit.note,
     }
     if (editingLog.sourceItemId) {
-      updateItemOnDate(editingLog.date, editingLog.sourceItemId, (item) => ({ ...item, result: nextResult, done: true }))
+      await updateItemOnDate(editingLog.date, editingLog.sourceItemId, (item) => ({ ...item, result: nextResult, done: true }))
     } else {
-      setState((s) => ({ ...s, logs: s.logs.map((entry) => entry.id === editingLog.id ? { ...entry, result: nextResult } : entry) }))
+      await commitScheduleState(state.schedule, state.runs, state.logs.map((entry) => entry.id === editingLog.id ? { ...entry, result: nextResult } : entry))
     }
     pushToast(`${exercise.name} log updated.`)
     cancelLogEdit()
@@ -665,9 +1212,9 @@ export default function App() {
       event.target.value = ''
     }
   }
-  const importData = () => {
+  const importData = async () => {
     if (!pendingImport) return
-    loadWorkspaceState(ensureAmpedData(pendingImport))
+    await replaceWorkspaceState(ensureAmpedData(pendingImport))
     setPendingImport(null)
     pushToast('Backup imported.')
   }
@@ -680,7 +1227,7 @@ export default function App() {
       .filter((h) => h.exerciseId === item.exerciseId && h.done && h.sourceItemId !== item.id)
       .sort((a, b) => b.date.localeCompare(a.date))
     const nextItem = { ...item, done: nextDone }
-    updateItemOnDate(date, item.id, () => nextItem)
+    void updateItemOnDate(date, item.id, () => nextItem)
 
     if (nextDone && exercise) {
       pushToast(`${exercise.name} complete.`)
@@ -719,62 +1266,70 @@ export default function App() {
     }
   }
 
-  const applyPlanById = (planIdToApply: string, startDate: string) => {
+  const applyPlanById = async (planIdToApply: string, startDate: string) => {
     const targetPlan = state.plans.find((p) => p.id === planIdToApply)
     if (!targetPlan) return
     const runId = id('run')
     const made: Day[] = targetPlan.days.map((pd, i) => ({ date: add(startDate, i), notes: pd.notes || `${targetPlan.name} - ${pd.label}`, rest: pd.rest, skipped: false, runId, dayNo: i + 1, items: pd.items.map((it) => ({ id: id('it'), exerciseId: it.exerciseId, type: it.type, target: clone(it.target), ref: it.ref, done: false, result: {} })) }))
-    setState((s) => {
-      const replacedItemIds = new Set(s.schedule.filter((day0) => made.some((created) => created.date === day0.date)).flatMap((day0) => day0.items.map((item) => item.id)))
-      return {
-        ...s,
-        schedule: [...s.schedule.filter((x) => !made.some((m) => m.date === x.date)), ...made],
-        runs: [...s.runs, { id: runId, planId: targetPlan.id, startDate, name: `${targetPlan.name} starting ${fmtShort(startDate)}` }],
-        logs: s.logs.filter((entry) => !entry.sourceItemId || !replacedItemIds.has(entry.sourceItemId)),
-      }
-    })
+    const replacedItemIds = new Set(state.schedule.filter((day0) => made.some((created) => created.date === day0.date)).flatMap((day0) => day0.items.map((item) => item.id)))
+    await commitScheduleState(
+      [...state.schedule.filter((x) => !made.some((m) => m.date === x.date)), ...made],
+      [...state.runs, { id: runId, planId: targetPlan.id, startDate, name: `${targetPlan.name} starting ${fmtShort(startDate)}` }],
+      state.logs.filter((entry) => !entry.sourceItemId || !replacedItemIds.has(entry.sourceItemId)),
+    )
   }
 
-  const shiftPlan = () => {
+  const shiftPlan = async () => {
     if (!day.runId || shift < 1) return
     const nextDate = add(selected, shift)
-    setState((s) => {
-      const shiftedItems = new Map<string, string>()
-      const schedule = s.schedule.map((x) => {
-        if (x.runId === day.runId && x.date >= selected) {
-          const shiftedDate = add(x.date, shift)
-          x.items.forEach((item) => shiftedItems.set(item.id, shiftedDate))
-          return { ...x, date: shiftedDate }
-        }
-        return x
-      })
-      return {
-        ...s,
-        schedule,
-        runs: s.runs.map((r) => r.id === day.runId ? { ...r, startDate: r.startDate >= selected ? add(r.startDate, shift) : r.startDate } : r),
-        logs: s.logs.map((entry) => entry.sourceItemId && shiftedItems.has(entry.sourceItemId) ? { ...entry, date: shiftedItems.get(entry.sourceItemId)! } : entry),
+    const shiftedItems = new Map<string, string>()
+    const nextSchedule = state.schedule.map((x) => {
+      if (x.runId === day.runId && x.date >= selected) {
+        const shiftedDate = add(x.date, shift)
+        x.items.forEach((item) => shiftedItems.set(item.id, shiftedDate))
+        return { ...x, date: shiftedDate }
       }
+      return x
     })
-    setSelected(nextDate); setMonth(monthKey(nextDate))
+    await commitScheduleState(
+      nextSchedule,
+      state.runs.map((r) => r.id === day.runId ? { ...r, startDate: r.startDate >= selected ? add(r.startDate, shift) : r.startDate } : r),
+      state.logs.map((entry) => entry.sourceItemId && shiftedItems.has(entry.sourceItemId) ? { ...entry, date: shiftedItems.get(entry.sourceItemId)! } : entry),
+      { selectedDate: nextDate },
+    )
   }
 
-  const skipPlanDay = () => upsertDay(selected, (d0) => ({ ...d0, skipped: true }))
+  const skipPlanDay = async () => upsertDay(selected, (d0) => ({ ...d0, skipped: true }))
 
-  const normalizePlanDays = (days: PlanDay[]) => days.map((day, index) => ({ ...day, label: `Day ${index + 1}`, rest: day.items.length === 0 }))
-  const addPlanDayAt = (index: number) => plan && setState((s) => ({ ...s, plans: s.plans.map((p) => p.id === plan.id ? { ...p, days: normalizePlanDays([...p.days.slice(0, index), { id: id('pd'), label: '', rest: true, items: [] }, ...p.days.slice(index)]) } : p) }))
-  const updatePlanDay = (dayId: string, fx: (x: PlanDay) => PlanDay) => plan && setState((s) => ({ ...s, plans: s.plans.map((p) => p.id === plan.id ? { ...p, days: normalizePlanDays(p.days.map((x) => x.id === dayId ? fx(x) : x)) } : p) }))
-  const addExerciseToPlanDay = (dayId: string, exerciseId: string) => { const ex = exById[exerciseId]; if (!ex) return; updatePlanDay(dayId, (pd) => ({ ...pd, items: [...pd.items, { id: id('pi'), exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result' }] })) }
-  const updatePlanItem = (dayId: string, itemId: string, fx: (x: PlanDay['items'][number]) => PlanDay['items'][number]) => updatePlanDay(dayId, (pd) => ({ ...pd, items: pd.items.map((x) => x.id === itemId ? fx(x) : x) }))
-  const removePlanItem = (dayId: string, itemId: string) => updatePlanDay(dayId, (pd) => ({ ...pd, items: pd.items.filter((x) => x.id !== itemId) }))
-  const savePlanMeta = () => {
+  const addPlanDayAt = async (index: number) => {
+    if (!plan) return
+    const nextPlans = state.plans.map((p) => p.id === plan.id ? { ...p, days: normalizePlanDaysData([...p.days.slice(0, index), { id: id('pd'), label: '', rest: true, items: [] }, ...p.days.slice(index)]) } : p)
+    await commitPlans(nextPlans, plan.id)
+  }
+  const updatePlanDay = async (dayId: string, fx: (x: PlanDay) => PlanDay) => {
+    if (!plan) return
+    const nextPlans = state.plans.map((p) => p.id === plan.id ? { ...p, days: normalizePlanDaysData(p.days.map((x) => x.id === dayId ? fx(x) : x)) } : p)
+    await commitPlans(nextPlans, plan.id)
+  }
+  const addExerciseToPlanDay = async (dayId: string, exerciseId: string) => {
+    const ex = exById[exerciseId]
+    if (!ex) return
+    await updatePlanDay(dayId, (pd) => ({ ...pd, items: [...pd.items, { id: id('pi'), exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result' }] }))
+  }
+  const updatePlanItem = async (dayId: string, itemId: string, fx: (x: PlanDay['items'][number]) => PlanDay['items'][number]) => {
+    await updatePlanDay(dayId, (pd) => ({ ...pd, items: pd.items.map((x) => x.id === itemId ? fx(x) : x) }))
+  }
+  const removePlanItem = async (dayId: string, itemId: string) => {
+    await updatePlanDay(dayId, (pd) => ({ ...pd, items: pd.items.filter((x) => x.id !== itemId) }))
+  }
+  const savePlanMeta = async () => {
     if (!selectedPlanId || !plan) return
-    setState((s) => ({ ...s, plans: s.plans.map((p) => p.id === selectedPlanId ? { ...p, name: planForm.name.trim() || p.name, focus: planForm.focus } : p) }))
+    const nextPlans = state.plans.map((p) => p.id === selectedPlanId ? { ...p, name: planForm.name.trim() || p.name, focus: planForm.focus } : p)
+    await commitPlans(nextPlans, selectedPlanId)
   }
-  const startNewPlan = () => {
+  const startNewPlan = async () => {
     const nextPlan: Plan = { id: id('plan'), name: 'New plan', focus: '', days: [] }
-    setState((s) => ({ ...s, plans: [...s.plans, nextPlan] }))
-    setSelectedPlanId(nextPlan.id)
-    setPlanForm(formFromPlan(nextPlan))
+    await commitPlans([...state.plans, nextPlan], nextPlan.id)
   }
   const selectPlan = (nextPlanId: string) => {
     const nextPlan = state.plans.find((p) => p.id === nextPlanId)
@@ -782,71 +1337,73 @@ export default function App() {
     setSelectedPlanId(nextPlanId)
     setPlanForm(formFromPlan(nextPlan))
   }
-  const deletePlan = () => {
+  const deletePlan = async () => {
     if (!selectedPlanId) return
     const remainingPlans = state.plans.filter((p) => p.id !== selectedPlanId)
     const nextPlan = remainingPlans[0] ?? null
-    setState((s) => ({ ...s, plans: s.plans.filter((p) => p.id !== selectedPlanId) }))
-    setSelectedPlanId(nextPlan?.id ?? null)
-    setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
+    await commitPlans(remainingPlans, nextPlan?.id ?? null)
   }
-  const deleteExercise = (exerciseId: string) => {
+  const deleteExercise = async (exerciseId: string) => {
+    if (supabase && user) {
+      const client = supabase
+      const { error } = await client.from('exercises').delete().eq('id', exerciseId).eq('user_id', user.id)
+      if (error) {
+        pushToast('Could not delete exercise.')
+        return
+      }
+    }
     const remainingExercises = state.exercises.filter((exercise) => exercise.id !== exerciseId)
     const nextExercise = remainingExercises[0] ?? null
     setState((s) => ({
       ...s,
       exercises: s.exercises.filter((exercise) => exercise.id !== exerciseId),
       schedule: s.schedule.map((day) => normalizeScheduleDay({ ...day, items: day.items.filter((item) => item.exerciseId !== exerciseId) })),
-      plans: s.plans.map((plan) => ({ ...plan, days: normalizePlanDays(plan.days.map((day) => ({ ...day, items: day.items.filter((item) => item.exerciseId !== exerciseId) }))) })),
+      plans: s.plans.map((plan) => ({ ...plan, days: normalizePlanDaysData(plan.days.map((day) => ({ ...day, items: day.items.filter((item) => item.exerciseId !== exerciseId) }))) })),
       logs: s.logs.filter((entry) => entry.exerciseId !== exerciseId),
     }))
     setSelectedExerciseId(nextExercise?.id ?? null)
     setSelectedProgressExerciseId((current) => current === exerciseId ? nextExercise?.id ?? null : current)
     setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm())
   }
-  const deleteRun = (runId: string) => {
-    setState((s) => ({
-      ...s,
-      runs: s.runs.filter((run) => run.id !== runId),
-      schedule: s.schedule.filter((day) => day.runId !== runId),
-      logs: s.logs.filter((entry) => {
-        if (!entry.sourceItemId) return true
-        return !s.schedule.some((day) => day.runId === runId && day.items.some((item) => item.id === entry.sourceItemId))
-      }),
-    }))
+  const deleteRun = async (runId: string) => {
+    const nextSchedule = state.schedule.filter((day0) => day0.runId !== runId)
+    const nextRuns = state.runs.filter((run) => run.id !== runId)
+    const nextLogs = state.logs.filter((entry) => {
+      if (!entry.sourceItemId) return true
+      return !state.schedule.some((day0) => day0.runId === runId && day0.items.some((item) => item.id === entry.sourceItemId))
+    })
+    await commitScheduleState(nextSchedule, nextRuns, nextLogs)
   }
-  const resetAllData = () => {
-    loadWorkspaceState(ensureAmpedData(seed()))
+  const resetAllData = async () => {
+    await replaceWorkspaceState(ensureAmpedData(seed()))
     pushToast('App data reset.')
   }
-  const resetScheduleData = () => {
-    setState((s) => ({ ...s, schedule: [], runs: [], logs: s.logs.filter((entry) => !entry.sourceItemId) }))
-    setSelected(today)
-    setMonth(monthKey(today))
+  const resetScheduleData = async () => {
+    await commitScheduleState([], [], state.logs.filter((entry) => !entry.sourceItemId), { selectedDate: today })
     cancelLogEdit()
     pushToast('Schedule and active runs cleared.')
   }
-  const resetProgressData = () => {
-    setState((s) => ({
-      ...s,
-      schedule: s.schedule.map((day0) => ({
+  const resetProgressData = async () => {
+    await commitScheduleState(
+      state.schedule.map((day0) => ({
         ...day0,
         items: day0.items.map((item) => ({ ...item, done: false, result: {} })),
       })),
-      logs: [],
-    }))
+      state.runs,
+      [],
+    )
     cancelLogEdit()
     pushToast('Progress history cleared.')
   }
-  const confirmAction = () => {
+  const confirmAction = async () => {
     if (!confirmState) return
-    if (confirmState.kind === 'delete-run') deleteRun(confirmState.runId)
-    if (confirmState.kind === 'delete-plan') deletePlan()
-    if (confirmState.kind === 'delete-exercise') deleteExercise(confirmState.exerciseId)
-    if (confirmState.kind === 'import-data') importData()
-    if (confirmState.kind === 'reset-all-data') resetAllData()
-    if (confirmState.kind === 'reset-schedule-data') resetScheduleData()
-    if (confirmState.kind === 'reset-progress-data') resetProgressData()
+    if (confirmState.kind === 'delete-run') await deleteRun(confirmState.runId)
+    if (confirmState.kind === 'delete-plan') await deletePlan()
+    if (confirmState.kind === 'delete-exercise') await deleteExercise(confirmState.exerciseId)
+    if (confirmState.kind === 'import-data') await importData()
+    if (confirmState.kind === 'reset-all-data') await resetAllData()
+    if (confirmState.kind === 'reset-schedule-data') await resetScheduleData()
+    if (confirmState.kind === 'reset-progress-data') await resetProgressData()
     setConfirmState(null)
   }
   const cancelConfirm = () => {
@@ -855,36 +1412,32 @@ export default function App() {
     }
     setConfirmState(null)
   }
-  const movePlanDay = (targetDayId: string) => {
+  const movePlanDay = async (targetDayId: string) => {
     if (!plan || !draggedPlanDayId || draggedPlanDayId === targetDayId) return
-    setState((s) => ({
-      ...s,
-      plans: s.plans.map((p) => {
-        if (p.id !== plan.id) return p
-        const days = [...p.days]
-        const from = days.findIndex((day) => day.id === draggedPlanDayId)
-        const to = days.findIndex((day) => day.id === targetDayId)
-        if (from < 0 || to < 0) return p
-        const [moved] = days.splice(from, 1)
-        days.splice(to, 0, moved)
-        return { ...p, days: normalizePlanDays(days) }
-      }),
-    }))
+    const nextPlans = state.plans.map((p) => {
+      if (p.id !== plan.id) return p
+      const days = [...p.days]
+      const from = days.findIndex((day) => day.id === draggedPlanDayId)
+      const to = days.findIndex((day) => day.id === targetDayId)
+      if (from < 0 || to < 0) return p
+      const [moved] = days.splice(from, 1)
+      days.splice(to, 0, moved)
+      return { ...p, days: normalizePlanDaysData(days) }
+    })
+    await commitPlans(nextPlans, plan.id)
     setDraggedPlanDayId(null)
   }
-  const deletePlanDay = (dayId: string) => {
+  const deletePlanDay = async (dayId: string) => {
     if (!plan) return
-    setState((s) => ({
-      ...s,
-      plans: s.plans.map((p) =>
-        p.id === plan.id
-          ? { ...p, days: normalizePlanDays(p.days.filter((day) => day.id !== dayId)) }
-          : p,
-      ),
-    }))
+    const nextPlans = state.plans.map((p) =>
+      p.id === plan.id
+        ? { ...p, days: normalizePlanDaysData(p.days.filter((day) => day.id !== dayId)) }
+        : p,
+    )
+    await commitPlans(nextPlans, plan.id)
   }
 
-  const saveExercise = () => {
+  const saveExercise = async () => {
     if (!exerciseForm.name.trim()) return
     const nextExercise: Exercise = {
       id: selectedExerciseId ?? id('ex'),
@@ -897,6 +1450,27 @@ export default function App() {
       target: clone(exerciseForm.target),
       refs: exerciseForm.refs,
       progressMetric: exerciseForm.progressMetric,
+    }
+
+    if (supabase && user) {
+      const client = supabase
+      const { error } = await client.from('exercises').upsert({
+        id: nextExercise.id,
+        user_id: user.id,
+        name: nextExercise.name,
+        category: nextExercise.category,
+        equipment: nextExercise.equipment,
+        notes: nextExercise.notes,
+        default_type: nextExercise.defaultType,
+        allowed: nextExercise.allowed,
+        target: nextExercise.target,
+        refs: nextExercise.refs,
+        progress_metric: nextExercise.progressMetric,
+      })
+      if (error) {
+        pushToast('Could not save exercise.')
+        return
+      }
     }
 
     setState((s) => ({
@@ -931,11 +1505,12 @@ export default function App() {
           <div>
             <p className="eyebrow">Discipline +</p>
             <h1>Discipline +</h1>
-            {hasSupabaseEnv && <p className="mutedCopy authSummary">{authLoading ? 'Checking sign-in...' : user ? `Signed in as ${user.email ?? 'user'}` : 'Not signed in'}</p>}
           </div>
-          <div className="headerActions">
+          <div className="profileDock">
             {hasSupabaseEnv && !user && !authLoading && <button className="pill" onClick={signInWithGoogle}>Sign in</button>}
-            {hasSupabaseEnv && user && <button className="pill" onClick={signOut}>Sign out</button>}
+            {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => setTab('settings')} aria-label="Open profile settings">
+              {userAvatar ? <img src={userAvatar} alt={user.email ?? 'Profile'} className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
+            </button>}
             <button className={tab === 'settings' ? 'iconPill activeIconPill' : 'iconPill'} onClick={() => setTab('settings')} aria-label="Open settings">⚙</button>
           </div>
         </div>
