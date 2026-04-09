@@ -1,10 +1,11 @@
 .app { padding: 16px; display: flex; flex-direction: column; gap: 12px; max-width: 1240px; margin: 0 auto; }
 .hero, .panel, .today, .card, .calendarWrap, .empty { border: 1px solid var(--border); background: var(--panel); box-shadow: var(--shadow); border-radius: 20px; }
-.hero { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: 16px; padding: 14px 18px; background: var(--panel); }
+.hero { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: 16px; padding: 10px 14px; background: var(--panel); }
 .simpleHero { grid-template-columns: 1fr; }
-.appHeaderRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.profileDock { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.avatarButton { width: 40px; height: 40px; padding: 0; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; overflow: hidden; display: grid; place-items: center; }
+.appHeaderRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.appHeaderRow h1 { margin: 0; font-size: 1.45rem; line-height: 1.1; }
+.profileDock { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.avatarButton { width: 38px; height: 38px; padding: 0; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; overflow: hidden; display: grid; place-items: center; }
 .avatarImage { width: 100%; height: 100%; object-fit: cover; display: block; }
 .avatarFallback { font-size: .95rem; font-weight: 700; color: var(--accent-deep); }
 .today, .panel, .card, .empty { padding: 14px; }
@@ -66,7 +67,7 @@
 .planExerciseCard { padding: 10px 12px; gap: 8px; }
 .addDayButton { align-self: flex-start; width: auto; padding: 4px 8px; border: 1px dashed var(--border); background: transparent; color: var(--accent-deep); border-radius: 999px; font: inherit; font-size: .88rem; }
 .dayRowActions { display: flex; align-items: center; gap: 6px; }
-.iconPill { padding: 4px 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-strong); border-radius: 999px; font: inherit; font-size: .82rem; }
+.iconPill { min-width: 36px; min-height: 36px; padding: 0; border: 1px solid var(--border); background: var(--surface); color: var(--text-strong); border-radius: 999px; font: inherit; font-size: 1rem; display: inline-flex; align-items: center; justify-content: center; }
 .activeIconPill { background: var(--surface-strong); border-color: var(--accent); color: var(--accent-deep); }
 .planListRow { gap: 8px; }
 .planListButton { flex: 1; border: 0; background: transparent; padding: 0; text-align: left; color: inherit; font: inherit; }

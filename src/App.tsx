@@ -408,6 +408,15 @@ function runStartLabel(startDate: string, today: string) {
   return `Starting today (${fmtShort(startDate)})`
 }
 
+function scheduledPlanLabel(day: Day, runs: Run[], plans: Plan[]) {
+  if (!day.runId || !day.dayNo) return ''
+  const run = runs.find((entry) => entry.id === day.runId)
+  if (!run?.planId) return ''
+  const plan = plans.find((entry) => entry.id === run.planId)
+  if (!plan) return ''
+  return `${plan.name} - Day ${day.dayNo}`
+}
+
 function effectiveProgressMetric(exercise: Exercise, type: TT): PM {
   if (type === 'distance' || type === 'duration' || type === 'for-time') {
     return 'time'
@@ -762,6 +771,8 @@ export default function App() {
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
   const todayDay = today ? normalizeScheduleDay(dayByDate[today] ?? { date: today, notes: '', rest: true, skipped: false, items: [] }) : undefined
   const todayItems = todayDay?.items ?? []
+  const selectedDayPlanLabel = scheduledPlanLabel(day, state.runs, state.plans)
+  const todayPlanLabel = todayDay ? scheduledPlanLabel(todayDay, state.runs, state.plans) : ''
   const monthDays = useMemo(() => monthGrid(month), [month])
   const sortedDays = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
   const futureDays = sortedDays.filter((day0) => day0.date >= today)
@@ -1770,7 +1781,6 @@ export default function App() {
       <header className="hero simpleHero">
         <div className="appHeaderRow">
           <div>
-            <p className="eyebrow">Discipline +</p>
             <h1>Discipline +</h1>
           </div>
           <div className="profileDock">
@@ -1789,7 +1799,7 @@ export default function App() {
 
       {tab === 'schedule' && <main className="grid">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
-            <div><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}</h2><p className="mutedCopy">{day.rest ? 'Recovery / rest day' : 'Planned work'}</p></div>
+            <div><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}</h2>{selectedDayPlanLabel && <p className="mutedCopy">{selectedDayPlanLabel}</p>}</div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
           <label className="field">
             <span>Add exercise to this day</span>
@@ -1863,7 +1873,7 @@ export default function App() {
         <section className="panel scheduleCalendarPanel">
           <div className="todaySummary">
             <div className="row">
-              <div><p className="eyebrow">Today</p><h2>{fmtDay(today)}</h2></div>
+              <div><p className="eyebrow">Today</p><h2>{fmtDay(today)}</h2>{todayPlanLabel && <p className="mutedCopy">{todayPlanLabel}</p>}</div>
               <button className="primary" onClick={() => focusDay(today, true)}>Open</button>
             </div>
             <div className="todayList">
@@ -1900,11 +1910,13 @@ export default function App() {
           </div> : <div className="stack">{visibleDays.map((x) => {
             const isComplete = !x.rest && x.items.length > 0 && x.items.every((i) => i.done)
             const isRest = x.items.length === 0 || x.rest
+            const planLabel = scheduledPlanLabel(x, state.runs, state.plans)
             return <button key={x.date} className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : ''].filter(Boolean).join(' ')} onClick={() => focusDay(x.date, true)}>
             <div className="agendaDateRow">
               <strong>{fmtDay(x.date)}</strong>
               <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${x.items.filter((i) => i.done).length}/${x.items.length}`}</span>
             </div>
+            {planLabel && <p className="mutedCopy">{planLabel}</p>}
             {isRest ? <p className="mutedCopy">- Rest day</p> : <div className="agendaBullets">
               {x.items.map((item) => {
                 const ex = exById[item.exerciseId]
