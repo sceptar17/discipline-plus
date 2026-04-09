@@ -786,14 +786,72 @@ export default function App() {
     const removedIds = (currentRows ?? []).map((row) => row.id).filter((id0) => !exerciseRows.some((row) => row.id === id0))
     if (removedIds.length) {
       const { error } = await client.from('exercises').delete().eq('user_id', user.id).in('id', removedIds)
-      if (error) return false
+      if (error) {
+        console.error('exercise delete failed', error)
+        return false
+      }
     }
     if (exerciseRows.length) {
       const { error } = await client.from('exercises').upsert(exerciseRows)
-      if (error) return false
+      if (error) {
+        console.error('exercise upsert failed', error)
+        return false
+      }
     }
     return true
   }, [user])
+  const ensureScheduleDependencies = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
+    if (!supabase || !user) return true
+
+    const client = supabase
+    const requiredExerciseIds = new Set([
+      ...nextSchedule.flatMap((day0) => day0.items.map((item) => item.exerciseId)),
+      ...nextLogs.map((entry) => entry.exerciseId),
+    ])
+    const exercisesToEnsure = state.exercises
+      .filter((exercise) => requiredExerciseIds.has(exercise.id))
+      .map((exercise) => ({
+        id: exercise.id,
+        user_id: user.id,
+        name: exercise.name,
+        category: exercise.category,
+        equipment: exercise.equipment,
+        notes: exercise.notes,
+        default_type: exercise.defaultType,
+        allowed: exercise.allowed,
+        target: exercise.target,
+        refs: exercise.refs,
+        progress_metric: exercise.progressMetric,
+      }))
+
+    if (exercisesToEnsure.length) {
+      const { error } = await client.from('exercises').upsert(exercisesToEnsure)
+      if (error) {
+        console.error('schedule dependency exercise upsert failed', error)
+        return false
+      }
+    }
+
+    const requiredPlanIds = new Set(nextRuns.map((run) => run.planId).filter(Boolean))
+    const plansToEnsure = availablePlans
+      .filter((plan0) => requiredPlanIds.has(plan0.id))
+      .map((plan0) => ({
+        id: plan0.id,
+        user_id: user.id,
+        name: plan0.name,
+        focus: plan0.focus,
+      }))
+
+    if (plansToEnsure.length) {
+      const { error } = await client.from('plans').upsert(plansToEnsure)
+      if (error) {
+        console.error('schedule dependency plan upsert failed', error)
+        return false
+      }
+    }
+
+    return true
+  }, [state.exercises, state.plans, user])
   const persistPlans = useCallback(async (nextPlans: Plan[]) => {
     if (!supabase || !user) return true
 
@@ -830,32 +888,50 @@ export default function App() {
     const removedItemIds = (currentItems ?? []).map((row) => row.id).filter((id0) => !itemRows.some((row) => row.id === id0))
     if (removedItemIds.length) {
       const { error } = await client.from('plan_items').delete().eq('user_id', user.id).in('id', removedItemIds)
-      if (error) return false
+      if (error) {
+        console.error('plan item delete failed', error)
+        return false
+      }
     }
 
     const removedDayIds = (currentDays ?? []).map((row) => row.id).filter((id0) => !dayRows.some((row) => row.id === id0))
     if (removedDayIds.length) {
       const { error } = await client.from('plan_days').delete().eq('user_id', user.id).in('id', removedDayIds)
-      if (error) return false
+      if (error) {
+        console.error('plan day delete failed', error)
+        return false
+      }
     }
 
     const removedPlanIds = (currentPlans ?? []).map((row) => row.id).filter((id0) => !planRows.some((row) => row.id === id0))
     if (removedPlanIds.length) {
       const { error } = await client.from('plans').delete().eq('user_id', user.id).in('id', removedPlanIds)
-      if (error) return false
+      if (error) {
+        console.error('plan delete failed', error)
+        return false
+      }
     }
 
     if (planRows.length) {
       const { error } = await client.from('plans').upsert(planRows)
-      if (error) return false
+      if (error) {
+        console.error('plan upsert failed', error)
+        return false
+      }
     }
     if (dayRows.length) {
       const { error } = await client.from('plan_days').upsert(dayRows)
-      if (error) return false
+      if (error) {
+        console.error('plan day upsert failed', error)
+        return false
+      }
     }
     if (itemRows.length) {
       const { error } = await client.from('plan_items').upsert(itemRows)
-      if (error) return false
+      if (error) {
+        console.error('plan item upsert failed', error)
+        return false
+      }
     }
 
     return true
@@ -863,11 +939,8 @@ export default function App() {
   const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
     if (!supabase || !user) return true
 
-    const exercisesReady = await persistExercisesCollection(state.exercises)
-    if (!exercisesReady) return false
-
-    const plansReady = await persistPlans(availablePlans)
-    if (!plansReady) return false
+    const dependenciesReady = await ensureScheduleDependencies(nextSchedule, nextRuns, nextLogs, availablePlans)
+    if (!dependenciesReady) return false
 
     const client = supabase
     const validPlanIds = new Set(availablePlans.map((plan0) => plan0.id))
@@ -919,46 +992,70 @@ export default function App() {
     const removedLogIds = (currentLogs ?? []).map((row) => row.id).filter((id0) => !logRows.some((row) => row.id === id0))
     if (removedLogIds.length) {
       const { error } = await client.from('logs').delete().eq('user_id', user.id).in('id', removedLogIds)
-      if (error) return false
+      if (error) {
+        console.error('log delete failed', error)
+        return false
+      }
     }
 
     const removedItemIds = (currentItems ?? []).map((row) => row.id).filter((id0) => !itemRows.some((row) => row.id === id0))
     if (removedItemIds.length) {
       const { error } = await client.from('schedule_items').delete().eq('user_id', user.id).in('id', removedItemIds)
-      if (error) return false
+      if (error) {
+        console.error('schedule item delete failed', error)
+        return false
+      }
     }
 
     const removedDayIds = (currentDays ?? []).map((row) => row.id).filter((id0) => !dayRows.some((row) => row.id === id0))
     if (removedDayIds.length) {
       const { error } = await client.from('schedule_days').delete().eq('user_id', user.id).in('id', removedDayIds)
-      if (error) return false
+      if (error) {
+        console.error('schedule day delete failed', error)
+        return false
+      }
     }
 
     const removedRunIds = (currentRuns ?? []).map((row) => row.id).filter((id0) => !runRows.some((row) => row.id === id0))
     if (removedRunIds.length) {
       const { error } = await client.from('runs').delete().eq('user_id', user.id).in('id', removedRunIds)
-      if (error) return false
+      if (error) {
+        console.error('run delete failed', error)
+        return false
+      }
     }
 
     if (runRows.length) {
       const { error } = await client.from('runs').upsert(runRows)
-      if (error) return false
+      if (error) {
+        console.error('run upsert failed', error)
+        return false
+      }
     }
     if (dayRows.length) {
       const { error } = await client.from('schedule_days').upsert(dayRows)
-      if (error) return false
+      if (error) {
+        console.error('schedule day upsert failed', error)
+        return false
+      }
     }
     if (itemRows.length) {
       const { error } = await client.from('schedule_items').upsert(itemRows)
-      if (error) return false
+      if (error) {
+        console.error('schedule item upsert failed', error)
+        return false
+      }
     }
     if (logRows.length) {
       const { error } = await client.from('logs').upsert(logRows)
-      if (error) return false
+      if (error) {
+        console.error('log upsert failed', error)
+        return false
+      }
     }
 
     return true
-  }, [persistExercisesCollection, persistPlans, state.exercises, state.plans, user])
+  }, [ensureScheduleDependencies, state.plans, user])
   const commitPlans = async (nextPlans: Plan[], nextSelectedPlanId?: string | null) => {
     const normalizedPlans = nextPlans.map((plan0) => ({ ...plan0, days: normalizePlanDaysData(plan0.days) }))
     setState((current) => ({ ...current, plans: normalizedPlans }))
@@ -1249,7 +1346,7 @@ export default function App() {
     await upsertDay(date, (d0) => ({ ...d0, skipped: false, items: [...d0.items, { id: id('it'), exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result', done: false, result: {} }] }))
   }
 
-  const updateItemOnDate = async (date: string, itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }) => {
+  const updateItemOnDate = async (date: string, itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }): Promise<boolean> => {
     let updatedItem: Item | undefined
     const hasDay = state.schedule.some((x) => x.date === date)
     const schedule = hasDay
@@ -1265,10 +1362,10 @@ export default function App() {
           })
         })
       : [...state.schedule, normalizeScheduleDay({ date, notes: '', rest: true, skipped: false, items: [] })]
-    if (!updatedItem) return
-    await commitScheduleState(schedule, state.runs, syncLog(state.logs, date, updatedItem), { persistMode: options?.persistMode })
+    if (!updatedItem) return false
+    return commitScheduleState(schedule, state.runs, syncLog(state.logs, date, updatedItem), { persistMode: options?.persistMode })
   }
-  const updateItem = async (itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }) => updateItemOnDate(selected, itemId, fx, options)
+  const updateItem = async (itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }): Promise<boolean> => updateItemOnDate(selected, itemId, fx, options)
   const removeItem = async (itemId: string) => {
     const nextSchedule = state.schedule.map((day0) => day0.date === selected ? normalizeScheduleDay({ ...day0, items: day0.items.filter((item) => item.id !== itemId) }) : day0)
     const nextLogs = state.logs.filter((entry) => entry.sourceItemId !== itemId)
@@ -1299,18 +1396,20 @@ export default function App() {
     if (parsedWeight !== undefined && !Number.isNaN(parsedWeight)) nextResult.weight = parsedWeight
     if (parsedCount !== undefined && !Number.isNaN(parsedCount)) nextResult.count = parsedCount
 
-    await updateItem(item.id, (x) => ({
+    const saved = await updateItem(item.id, (x) => ({
       ...x,
       type: draft.type,
       target: clone(draft.target),
       result: nextResult,
     }), { persistMode: 'immediate' })
 
-    setItemDrafts((current) => {
-      const next = { ...current }
-      delete next[item.id]
-      return next
-    })
+    if (saved !== false) {
+      setItemDrafts((current) => {
+        const next = { ...current }
+        delete next[item.id]
+        return next
+      })
+    }
   }
   function loadWorkspaceState(next: State) {
     setState(next)
