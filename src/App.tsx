@@ -767,14 +767,15 @@ export default function App() {
 
     return true
   }
-  const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[]) => {
+  const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
     if (!supabase || !user) return true
 
     const client = supabase
+    const validPlanIds = new Set(availablePlans.map((plan0) => plan0.id))
     const runRows = nextRuns.map((run) => ({
       id: run.id,
       user_id: user.id,
-      plan_id: run.planId || null,
+      plan_id: run.planId && validPlanIds.has(run.planId) ? run.planId : null,
       start_date: run.startDate,
       name: run.name,
     }))
@@ -858,7 +859,7 @@ export default function App() {
     }
 
     return true
-  }, [user])
+  }, [state.plans, user])
   const commitPlans = async (nextPlans: Plan[], nextSelectedPlanId?: string | null) => {
     const normalizedPlans = nextPlans.map((plan0) => ({ ...plan0, days: normalizePlanDaysData(plan0.days) }))
     const ok = await persistPlans(normalizedPlans)
@@ -876,7 +877,7 @@ export default function App() {
   }
   const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string }) => {
     const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
-    const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs)
+    const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs, state.plans)
     if (!ok) {
       pushToast('Could not save schedule.')
       return false
@@ -893,7 +894,7 @@ export default function App() {
     const normalized = ensureAmpedData(next)
     const exercisesOk = await persistExercisesCollection(normalized.exercises)
     const plansOk = exercisesOk ? await persistPlans(normalized.plans) : false
-    const scheduleOk = plansOk ? await persistScheduleData(normalized.schedule, normalized.runs, normalized.logs) : false
+    const scheduleOk = plansOk ? await persistScheduleData(normalized.schedule, normalized.runs, normalized.logs, normalized.plans) : false
     if (!exercisesOk || !plansOk || !scheduleOk) {
       pushToast('Could not replace app data.')
       return false
@@ -1524,21 +1525,21 @@ export default function App() {
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
             <div><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}</h2><p className="mutedCopy">{day.rest ? 'Recovery / rest day' : 'Planned work'}</p></div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
+          <label className="field">
+            <span>Add exercise to this day</span>
+            <select
+              defaultValue=""
+              onChange={(event) => {
+                if (!event.target.value) return
+                void addExerciseToDay(event.target.value, selected)
+                event.target.value = ''
+              }}
+            >
+              <option value="">Select exercise</option>
+              {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}</option>)}
+            </select>
+          </label>
           {!day.rest && <>
-            <label className="field">
-              <span>Add exercise to this day</span>
-              <select
-                defaultValue=""
-                onChange={(event) => {
-                  if (!event.target.value) return
-                  addExerciseToDay(event.target.value, selected)
-                  event.target.value = ''
-                }}
-              >
-                <option value="">Select exercise</option>
-                {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}</option>)}
-              </select>
-            </label>
             <div className="stack">{day.items.length === 0 && <div className="empty">No exercises yet.</div>}{day.items.map((item) => {
               const ex = exById[item.exerciseId]; if (!ex) return null
               const expanded = expandedItems[item.id] ?? false
