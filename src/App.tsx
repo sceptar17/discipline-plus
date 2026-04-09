@@ -411,10 +411,11 @@ function runStartLabel(startDate: string, today: string) {
 function scheduledPlanLabel(day: Day, runs: Run[], plans: Plan[]) {
   if (!day.runId || !day.dayNo) return ''
   const run = runs.find((entry) => entry.id === day.runId)
-  if (!run?.planId) return ''
-  const plan = plans.find((entry) => entry.id === run.planId)
-  if (!plan) return ''
-  return `${plan.name} - Day ${day.dayNo}`
+  if (!run) return ''
+  const plan = run.planId ? plans.find((entry) => entry.id === run.planId) : undefined
+  const planName = plan?.name ?? run.name.replace(/\s+starting\s+.+$/i, '').trim()
+  if (!planName) return ''
+  return `${planName} - Day ${day.dayNo}`
 }
 
 function effectiveProgressMetric(exercise: Exercise, type: TT): PM {
