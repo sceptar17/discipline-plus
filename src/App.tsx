@@ -248,35 +248,35 @@ function ensureAmpedData(state: LegacyState): State {
   const getExerciseId = (name: string) => existingByName.get(name)?.id ?? ''
 
   const ampedDays: PlanDay[] = [
-    { id: id('pd'), label: 'Day 1', rest: false, notes: 'Push day: 60 pushups (fewest sets), dumbbell floor press 4x8, dumbbell row 3x10 each side, plank 3x1 min, run 1 mile', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 60 }, 'personal-best'), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 4, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 180 }, 'personal-best'), planItem(getExerciseId('Run'), 'distance', { distance: 1, unit: 'mi' })] },
-    { id: id('pd'), label: 'Day 2', rest: false, notes: 'Run 2.5 miles easy pace', items: [planItem(getExerciseId('Run'), 'distance', { distance: 2.5, unit: 'mi' })] },
-    { id: id('pd'), label: 'Day 3', rest: false, notes: 'Lower body: goblet squat 4x10, dumbbell lunges 3x20, 100 squats for time, wall sit max', items: [planItem(getExerciseId('Goblet Squat'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Lunges'), 'sets', { sets: 3, reps: 20 }), planItem(getExerciseId('Squats'), 'for-time', { count: 100 }, 'personal-best'), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 60 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 4', rest: false, notes: 'Run 5k for time', items: [planItem(getExerciseId('Run'), 'distance', { distance: 5, unit: 'km' }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 5', rest: false, notes: 'Push endurance: 10 sets of 20 pushups with 60 sec rest, plank 2 min, 50 squats', items: [planItem(getExerciseId('Push-Ups'), 'sets', { sets: 10, reps: 20 }, 'personal-best'), planItem(getExerciseId('Plank'), 'duration', { seconds: 120 }, 'personal-best'), planItem(getExerciseId('Squats'), 'count', { count: 50 })] },
-    { id: id('pd'), label: 'Day 6', rest: false, notes: 'Conditioning circuit (3 rounds): 40 pushups, 60 squats, 40 lunges, 1 min plank, 1/4 mile run', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 40 }), planItem(getExerciseId('Squats'), 'count', { count: 60 }), planItem(getExerciseId('Lunges'), 'count', { count: 40 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 60 }), planItem(getExerciseId('Run'), 'distance', { distance: 0.25, unit: 'mi' })] },
-    { id: id('pd'), label: 'Day 7', rest: false, notes: 'Recovery: 1.5 mile jog, plank 2 min, wall sit 1 min', items: [planItem(getExerciseId('Run'), 'distance', { distance: 1.5, unit: 'mi' }), planItem(getExerciseId('Plank'), 'duration', { seconds: 120 }), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 60 })] },
+    { id: id('pd'), label: 'Day 1', rest: false, notes: 'Upper strength: 50 pushups, dumbbell floor press 4x8, dumbbell row 4x10 each side, dumbbell shoulder press 3x10, plank 3x45 sec', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 50 }), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 4, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Shoulder Press'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 135 })] },
+    { id: id('pd'), label: 'Day 2', rest: false, notes: 'Run 2 miles easy', items: [planItem(getExerciseId('Run'), 'distance', { distance: 2, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 3', rest: false, notes: 'Lower strength: goblet squat 4x10, dumbbell Romanian deadlift 4x10, dumbbell lunges 3x12 per leg, wall sit 2x45 sec', items: [planItem(getExerciseId('Goblet Squat'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Romanian Deadlift'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Lunges'), 'sets', { sets: 3, reps: 12 }), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 90 })] },
+    { id: id('pd'), label: 'Day 4', rest: false, notes: 'Recovery: 1 mile walk or easy jog, plank 2x30 sec, mobility/stretching', items: [planItem(getExerciseId('Run'), 'distance', { distance: 1, unit: 'mi' }), planItem(getExerciseId('Plank'), 'duration', { seconds: 60 })] },
+    { id: id('pd'), label: 'Day 5', rest: false, notes: 'Upper endurance + strength: 100 pushups for time, dumbbell floor press 3x8, dumbbell row 3x10 each side', items: [planItem(getExerciseId('Push-Ups'), 'for-time', { count: 100 }, 'personal-best'), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 3, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 3, reps: 10 })] },
+    { id: id('pd'), label: 'Day 6', rest: false, notes: 'Conditioning: 3 rounds of 30 pushups, 40 squats, 20 lunges per leg, 1 min plank, 1/4 mile run', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 30 }), planItem(getExerciseId('Squats'), 'count', { count: 40 }), planItem(getExerciseId('Lunges'), 'count', { count: 40 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 60 }), planItem(getExerciseId('Run'), 'distance', { distance: 0.25, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 7', rest: false, notes: 'Run 5k for time', items: [planItem(getExerciseId('Run'), 'distance', { distance: 5, unit: 'km' }, 'personal-best')] },
     { id: id('pd'), label: 'Day 8', rest: true, notes: 'Rest', items: [] },
-    { id: id('pd'), label: 'Day 9', rest: false, notes: 'Strength push: 80 pushups total, dumbbell floor press 4x8, dumbbell shoulder press 3x10, dumbbell row 3x10, plank 3x1:15', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 80 }, 'personal-best'), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 4, reps: 8 }), planItem(getExerciseId('Dumbbell Shoulder Press'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 225 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 10', rest: false, notes: 'Run 3 miles steady', items: [planItem(getExerciseId('Run'), 'distance', { distance: 3, unit: 'mi' })] },
-    { id: id('pd'), label: 'Day 11', rest: false, notes: 'Lower strength: goblet squat 4x12, dumbbell lunges 3x25, 150 squats for time, wall sit max', items: [planItem(getExerciseId('Goblet Squat'), 'sets', { sets: 4, reps: 12 }), planItem(getExerciseId('Dumbbell Lunges'), 'sets', { sets: 3, reps: 25 }), planItem(getExerciseId('Squats'), 'for-time', { count: 150 }, 'personal-best'), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 60 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 12', rest: false, notes: 'Speed day: run 1 mile fast, rest 10 minutes, max lunges', items: [planItem(getExerciseId('Run'), 'distance', { distance: 1, unit: 'mi' }, 'personal-best'), planItem(getExerciseId('Lunges'), 'count', { count: 40 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 13', rest: false, notes: 'Push challenge: 100 pushups for time, plank 3 min total', items: [planItem(getExerciseId('Push-Ups'), 'for-time', { count: 100 }, 'personal-best'), planItem(getExerciseId('Plank'), 'duration', { seconds: 180 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 14', rest: false, notes: 'Conditioning circuit (3 rounds): 50 squats, 40 pushups, 30 lunges, 1/4 mile run', items: [planItem(getExerciseId('Squats'), 'count', { count: 50 }), planItem(getExerciseId('Push-Ups'), 'count', { count: 40 }), planItem(getExerciseId('Lunges'), 'count', { count: 30 }), planItem(getExerciseId('Run'), 'distance', { distance: 0.25, unit: 'mi' })] },
-    { id: id('pd'), label: 'Day 15', rest: false, notes: 'Recovery jog: 1.5 miles, plank 2 min', items: [planItem(getExerciseId('Run'), 'distance', { distance: 1.5, unit: 'mi' }), planItem(getExerciseId('Plank'), 'duration', { seconds: 120 })] },
+    { id: id('pd'), label: 'Day 9', rest: false, notes: 'Upper strength: 60 pushups, dumbbell floor press 4x8, dumbbell row 4x10 each side, dumbbell shoulder press 3x10, plank 3x1 min', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 60 }), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 4, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Shoulder Press'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 180 })] },
+    { id: id('pd'), label: 'Day 10', rest: false, notes: 'Run 2.5 miles steady', items: [planItem(getExerciseId('Run'), 'distance', { distance: 2.5, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 11', rest: false, notes: 'Lower strength: goblet squat 4x10, dumbbell Romanian deadlift 4x10, dumbbell lunges 3x14 per leg, wall sit 2x1 min', items: [planItem(getExerciseId('Goblet Squat'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Romanian Deadlift'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Lunges'), 'sets', { sets: 3, reps: 14 }), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 120 })] },
+    { id: id('pd'), label: 'Day 12', rest: false, notes: 'Recovery: 1 mile walk or easy jog, plank 2x30 sec, mobility/stretching', items: [planItem(getExerciseId('Run'), 'distance', { distance: 1, unit: 'mi' }), planItem(getExerciseId('Plank'), 'duration', { seconds: 60 })] },
+    { id: id('pd'), label: 'Day 13', rest: false, notes: 'Upper endurance + strength: 10 sets of 15 pushups with 45 sec rest, dumbbell floor press 3x8, dumbbell row 3x10 each side', items: [planItem(getExerciseId('Push-Ups'), 'sets', { sets: 10, reps: 15 }), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 3, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 3, reps: 10 })] },
+    { id: id('pd'), label: 'Day 14', rest: false, notes: 'Conditioning: 3 rounds of 35 pushups, 50 squats, 20 lunges per leg, 1 min plank, 1/4 mile run', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 35 }), planItem(getExerciseId('Squats'), 'count', { count: 50 }), planItem(getExerciseId('Lunges'), 'count', { count: 40 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 60 }), planItem(getExerciseId('Run'), 'distance', { distance: 0.25, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 15', rest: false, notes: 'Run 1 mile fast, rest 10 min, then max lunges', items: [planItem(getExerciseId('Run'), 'distance', { distance: 1, unit: 'mi' }, 'personal-best'), planItem(getExerciseId('Lunges'), 'count', { count: 50 }, 'personal-best')] },
     { id: id('pd'), label: 'Day 16', rest: true, notes: 'Rest', items: [] },
-    { id: id('pd'), label: 'Day 17', rest: false, notes: 'Max pushups test, max plank test', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 100 }, 'personal-best'), planItem(getExerciseId('Plank'), 'duration', { seconds: 180 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 18', rest: false, notes: '200 squats for time', items: [planItem(getExerciseId('Squats'), 'for-time', { count: 200 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 19', rest: false, notes: 'Run 2 miles fast', items: [planItem(getExerciseId('Run'), 'distance', { distance: 2, unit: 'mi' }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 20', rest: false, notes: 'Push ladder: 10-15-20-25-30-25-20-15-10 pushups', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 170 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 21', rest: false, notes: 'Lower strength: goblet squat 5x10, dumbbell lunges 4x20', items: [planItem(getExerciseId('Goblet Squat'), 'sets', { sets: 5, reps: 10 }), planItem(getExerciseId('Dumbbell Lunges'), 'sets', { sets: 4, reps: 20 })] },
-    { id: id('pd'), label: 'Day 22', rest: false, notes: 'Run 5k steady', items: [planItem(getExerciseId('Run'), 'distance', { distance: 5, unit: 'km' })] },
-    { id: id('pd'), label: 'Day 23', rest: true, notes: 'Rest', items: [] },
-    { id: id('pd'), label: 'Day 24', rest: false, notes: 'Run 5k for time (beat earlier attempt)', items: [planItem(getExerciseId('Run'), 'distance', { distance: 5, unit: 'km' }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 25', rest: false, notes: '100 pushups fewest sets possible', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 100 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 26', rest: false, notes: '200 squats fewest sets possible', items: [planItem(getExerciseId('Squats'), 'count', { count: 200 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 27', rest: false, notes: 'Max plank and max wall sit', items: [planItem(getExerciseId('Plank'), 'duration', { seconds: 180 }, 'personal-best'), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 120 }, 'personal-best')] },
-    { id: id('pd'), label: 'Day 28', rest: false, notes: 'Max lunges then run 1.5 miles', items: [planItem(getExerciseId('Lunges'), 'count', { count: 50 }, 'personal-best'), planItem(getExerciseId('Run'), 'distance', { distance: 1.5, unit: 'mi' })] },
-    { id: id('pd'), label: 'Day 29', rest: false, notes: 'Final test: 50 pushups, 100 squats, 50 lunges per leg, 2 min wall sit, 2 min plank, 2 mile run', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 50 }), planItem(getExerciseId('Squats'), 'count', { count: 100 }), planItem(getExerciseId('Lunges'), 'count', { count: 100 }), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 120 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 120 }), planItem(getExerciseId('Run'), 'distance', { distance: 2, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 17', rest: false, notes: 'Upper strength: 70 pushups, dumbbell floor press 4x8, dumbbell row 4x10 each side, dumbbell shoulder press 3x10, plank 3x1 min', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 70 }), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 4, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Shoulder Press'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 180 })] },
+    { id: id('pd'), label: 'Day 18', rest: false, notes: 'Run 3 miles steady', items: [planItem(getExerciseId('Run'), 'distance', { distance: 3, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 19', rest: false, notes: 'Lower strength: goblet squat 4x12, dumbbell Romanian deadlift 4x10, dumbbell lunges 3x16 per leg, wall sit 2x1 min', items: [planItem(getExerciseId('Goblet Squat'), 'sets', { sets: 4, reps: 12 }), planItem(getExerciseId('Dumbbell Romanian Deadlift'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Lunges'), 'sets', { sets: 3, reps: 16 }), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 120 })] },
+    { id: id('pd'), label: 'Day 20', rest: false, notes: 'Recovery: 1 mile walk or easy jog, plank 2x30 sec, mobility/stretching', items: [planItem(getExerciseId('Run'), 'distance', { distance: 1, unit: 'mi' }), planItem(getExerciseId('Plank'), 'duration', { seconds: 60 })] },
+    { id: id('pd'), label: 'Day 21', rest: false, notes: 'Upper endurance + strength: max pushups, dumbbell floor press 3x8, dumbbell row 3x10 each side', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 100 }, 'personal-best'), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 3, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 3, reps: 10 })] },
+    { id: id('pd'), label: 'Day 22', rest: false, notes: 'Conditioning: 3 rounds of 40 pushups, 60 squats, 25 lunges per leg, 1 min plank, 1/4 mile run', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 40 }), planItem(getExerciseId('Squats'), 'count', { count: 60 }), planItem(getExerciseId('Lunges'), 'count', { count: 50 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 60 }), planItem(getExerciseId('Run'), 'distance', { distance: 0.25, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 23', rest: false, notes: '200 squats for time', items: [planItem(getExerciseId('Squats'), 'for-time', { count: 200 }, 'personal-best')] },
+    { id: id('pd'), label: 'Day 24', rest: true, notes: 'Rest', items: [] },
+    { id: id('pd'), label: 'Day 25', rest: false, notes: 'Upper test: 100 pushups fewest sets, dumbbell floor press 3x8, dumbbell row 3x10 each side', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 100 }, 'personal-best'), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 3, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 3, reps: 10 })] },
+    { id: id('pd'), label: 'Day 26', rest: false, notes: 'Run 5k for time', items: [planItem(getExerciseId('Run'), 'distance', { distance: 5, unit: 'km' }, 'personal-best')] },
+    { id: id('pd'), label: 'Day 27', rest: false, notes: 'Lower test: goblet squat 3x10, dumbbell Romanian deadlift 3x10, 200 squats fewest sets, max wall sit', items: [planItem(getExerciseId('Goblet Squat'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Dumbbell Romanian Deadlift'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Squats'), 'count', { count: 200 }, 'personal-best'), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 120 }, 'personal-best')] },
+    { id: id('pd'), label: 'Day 28', rest: false, notes: 'Core + conditioning: max plank, max wall sit, 50 lunges per leg, run 1.5 miles', items: [planItem(getExerciseId('Plank'), 'duration', { seconds: 120 }, 'personal-best'), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 120 }, 'personal-best'), planItem(getExerciseId('Lunges'), 'count', { count: 100 }), planItem(getExerciseId('Run'), 'distance', { distance: 1.5, unit: 'mi' })] },
+    { id: id('pd'), label: 'Day 29', rest: false, notes: 'Final test: 50 pushups, 100 squats, 2 min plank, 2 min wall sit, 2 mile run', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 50 }), planItem(getExerciseId('Squats'), 'count', { count: 100 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 120 }), planItem(getExerciseId('Wall Sit'), 'duration', { seconds: 120 }), planItem(getExerciseId('Run'), 'distance', { distance: 2, unit: 'mi' })] },
     { id: id('pd'), label: 'Day 30', rest: true, notes: 'Rest', items: [] },
   ]
 
@@ -868,7 +868,10 @@ export default function App() {
 
     return true
   }, [state.exercises, state.plans, user])
-  const persistPlans = useCallback(async (nextPlans: Plan[]) => {
+  const persistPlans = useCallback(async (
+    nextPlans: Plan[],
+    options?: { changedPlanIds?: string[]; deletedPlanIds?: string[] },
+  ) => {
     if (!supabase || !user) return true
 
     const client = supabase
@@ -885,68 +888,81 @@ export default function App() {
       day_number: index + 1,
       notes: day0.notes ?? '',
     })))
-    const itemRows = nextPlans.flatMap((plan0) => normalizePlanDaysData(plan0.days).flatMap((day0) => day0.items.map((item) => ({
-      id: item.id,
-      user_id: user.id,
-      plan_day_id: day0.id,
-      exercise_id: item.exerciseId,
-      type: item.type,
-      target: item.target,
-      ref: item.ref,
-    }))))
+    const changedPlanIds = options?.changedPlanIds ?? nextPlans.map((plan0) => plan0.id)
+    const deletedPlanIds = options?.deletedPlanIds ?? []
 
-    const [{ data: currentPlans }, { data: currentDays }, { data: currentItems }] = await Promise.all([
-      client.from('plans').select('id').eq('user_id', user.id),
-      client.from('plan_days').select('id').eq('user_id', user.id),
-      client.from('plan_items').select('id').eq('user_id', user.id),
-    ])
-
-    const removedItemIds = (currentItems ?? []).map((row) => row.id).filter((id0) => !itemRows.some((row) => row.id === id0))
-    if (removedItemIds.length) {
-      const { error } = await client.from('plan_items').delete().eq('user_id', user.id).in('id', removedItemIds)
-      if (error) {
-        console.error('plan item delete failed', error)
-        return false
-      }
-    }
-
-    const removedDayIds = (currentDays ?? []).map((row) => row.id).filter((id0) => !dayRows.some((row) => row.id === id0))
-    if (removedDayIds.length) {
-      const { error } = await client.from('plan_days').delete().eq('user_id', user.id).in('id', removedDayIds)
-      if (error) {
-        console.error('plan day delete failed', error)
-        return false
-      }
-    }
-
-    const removedPlanIds = (currentPlans ?? []).map((row) => row.id).filter((id0) => !planRows.some((row) => row.id === id0))
-    if (removedPlanIds.length) {
-      const { error } = await client.from('plans').delete().eq('user_id', user.id).in('id', removedPlanIds)
+    if (deletedPlanIds.length) {
+      const { error } = await client.from('plans').delete().eq('user_id', user.id).in('id', deletedPlanIds)
       if (error) {
         console.error('plan delete failed', error)
         return false
       }
     }
 
-    if (planRows.length) {
-      const { error } = await client.from('plans').upsert(planRows)
+    const changedPlanRows = planRows.filter((row) => changedPlanIds.includes(row.id))
+    if (changedPlanRows.length) {
+      const { error } = await client.from('plans').upsert(changedPlanRows)
       if (error) {
         console.error('plan upsert failed', error)
         return false
       }
     }
-    if (dayRows.length) {
-      const { error } = await client.from('plan_days').upsert(dayRows)
-      if (error) {
-        console.error('plan day upsert failed', error)
-        return false
+
+    for (const planId of changedPlanIds) {
+      const plan0 = nextPlans.find((entry) => entry.id === planId)
+      if (!plan0) continue
+
+      const planDayRows = dayRows.filter((row) => row.plan_id === planId)
+      const nextDayIds = planDayRows.map((row) => row.id)
+      const nextItemRows = normalizePlanDaysData(plan0.days).flatMap((day0) => day0.items.map((item) => ({
+        id: item.id,
+        user_id: user.id,
+        plan_day_id: day0.id,
+        exercise_id: item.exerciseId,
+        type: item.type,
+        target: item.target,
+        ref: item.ref,
+      })))
+
+      const { data: currentPlanDays } = await client.from('plan_days').select('id').eq('user_id', user.id).eq('plan_id', planId)
+      const currentDayIds = (currentPlanDays ?? []).map((row) => row.id)
+      let currentPlanItems: Array<{ id: string }> = []
+      if (currentDayIds.length) {
+        const { data } = await client.from('plan_items').select('id').eq('user_id', user.id).in('plan_day_id', currentDayIds)
+        currentPlanItems = data ?? []
       }
-    }
-    if (itemRows.length) {
-      const { error } = await client.from('plan_items').upsert(itemRows)
-      if (error) {
-        console.error('plan item upsert failed', error)
-        return false
+
+      const removedItemIds = currentPlanItems.map((row) => row.id).filter((id0) => !nextItemRows.some((row) => row.id === id0))
+      if (removedItemIds.length) {
+        const { error } = await client.from('plan_items').delete().eq('user_id', user.id).in('id', removedItemIds)
+        if (error) {
+          console.error('plan item delete failed', error)
+          return false
+        }
+      }
+
+      const removedDayIds = currentDayIds.filter((id0) => !nextDayIds.includes(id0))
+      if (removedDayIds.length) {
+        const { error } = await client.from('plan_days').delete().eq('user_id', user.id).in('id', removedDayIds)
+        if (error) {
+          console.error('plan day delete failed', error)
+          return false
+        }
+      }
+
+      if (planDayRows.length) {
+        const { error } = await client.from('plan_days').upsert(planDayRows)
+        if (error) {
+          console.error('plan day upsert failed', error)
+          return false
+        }
+      }
+      if (nextItemRows.length) {
+        const { error } = await client.from('plan_items').upsert(nextItemRows)
+        if (error) {
+          console.error('plan item upsert failed', error)
+          return false
+        }
       }
     }
 
@@ -1072,15 +1088,21 @@ export default function App() {
 
     return true
   }, [ensureScheduleDependencies, state.plans, user])
-  const commitPlans = async (nextPlans: Plan[], nextSelectedPlanId?: string | null) => {
+  const commitPlans = async (
+    nextPlans: Plan[],
+    options?: { selectedPlanId?: string | null; changedPlanIds?: string[]; deletedPlanIds?: string[] },
+  ) => {
     const normalizedPlans = nextPlans.map((plan0) => ({ ...plan0, days: normalizePlanDaysData(plan0.days) }))
     setState((current) => ({ ...current, plans: normalizedPlans }))
-    const resolvedPlanId = nextSelectedPlanId === undefined ? selectedPlanId : nextSelectedPlanId
+    const resolvedPlanId = options?.selectedPlanId === undefined ? selectedPlanId : options.selectedPlanId
     const nextPlan = normalizedPlans.find((plan0) => plan0.id === resolvedPlanId) ?? normalizedPlans.find((plan0) => plan0.name === 'Amped') ?? normalizedPlans[0] ?? null
     setSelectedPlanId(nextPlan?.id ?? null)
     setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
 
-    const ok = await persistPlans(normalizedPlans)
+    const ok = await persistPlans(normalizedPlans, {
+      changedPlanIds: options?.changedPlanIds,
+      deletedPlanIds: options?.deletedPlanIds,
+    })
     if (!ok) {
       pushToast('Could not save plans.')
       return false
@@ -1127,7 +1149,8 @@ export default function App() {
   const replaceWorkspaceState = async (next: State) => {
     const normalized = ensureAmpedData(next)
     const exercisesOk = await persistExercisesCollection(normalized.exercises)
-    const plansOk = exercisesOk ? await persistPlans(normalized.plans) : false
+    const deletedPlanIds = state.plans.map((plan0) => plan0.id).filter((id0) => !normalized.plans.some((plan0) => plan0.id === id0))
+    const plansOk = exercisesOk ? await persistPlans(normalized.plans, { changedPlanIds: normalized.plans.map((plan0) => plan0.id), deletedPlanIds }) : false
     const scheduleOk = plansOk ? await persistScheduleData(normalized.schedule, normalized.runs, normalized.logs, normalized.plans) : false
     if (!exercisesOk || !plansOk || !scheduleOk) {
       pushToast('Could not replace app data.')
@@ -1251,7 +1274,13 @@ export default function App() {
       const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
       const repairedPlans = mergeStarterAmped(remotePlans, starterPlans)
       if (repairedPlans !== remotePlans) {
-        const repaired = await persistPlans(repairedPlans)
+        const repairedPlanIds = repairedPlans
+          .filter((plan0) => {
+            const remotePlan = remotePlans.find((entry) => entry.id === plan0.id)
+            return !remotePlan || !planHasContent(remotePlan)
+          })
+          .map((plan0) => plan0.id)
+        const repaired = await persistPlans(repairedPlans, { changedPlanIds: repairedPlanIds })
         if (!repaired || !active || authUserRef.current !== ownerId) return
       }
       if (authUserRef.current !== ownerId) return
@@ -1583,12 +1612,12 @@ export default function App() {
   const addPlanDayAt = async (index: number) => {
     if (!plan) return
     const nextPlans = state.plans.map((p) => p.id === plan.id ? { ...p, days: normalizePlanDaysData([...p.days.slice(0, index), { id: id('pd'), label: '', rest: true, items: [] }, ...p.days.slice(index)]) } : p)
-    await commitPlans(nextPlans, plan.id)
+    await commitPlans(nextPlans, { selectedPlanId: plan.id, changedPlanIds: [plan.id] })
   }
   const updatePlanDay = async (dayId: string, fx: (x: PlanDay) => PlanDay) => {
     if (!plan) return
     const nextPlans = state.plans.map((p) => p.id === plan.id ? { ...p, days: normalizePlanDaysData(p.days.map((x) => x.id === dayId ? fx(x) : x)) } : p)
-    await commitPlans(nextPlans, plan.id)
+    await commitPlans(nextPlans, { selectedPlanId: plan.id, changedPlanIds: [plan.id] })
   }
   const addExerciseToPlanDay = async (dayId: string, exerciseId: string) => {
     const ex = exById[exerciseId]
@@ -1604,11 +1633,11 @@ export default function App() {
   const savePlanMeta = async () => {
     if (!selectedPlanId || !plan) return
     const nextPlans = state.plans.map((p) => p.id === selectedPlanId ? { ...p, name: planForm.name.trim() || p.name, focus: planForm.focus } : p)
-    await commitPlans(nextPlans, selectedPlanId)
+    await commitPlans(nextPlans, { selectedPlanId, changedPlanIds: [selectedPlanId] })
   }
   const startNewPlan = async () => {
     const nextPlan: Plan = { id: id('plan'), name: 'New plan', focus: '', days: [] }
-    await commitPlans([...state.plans, nextPlan], nextPlan.id)
+    await commitPlans([...state.plans, nextPlan], { selectedPlanId: nextPlan.id, changedPlanIds: [nextPlan.id] })
   }
   const selectPlan = (nextPlanId: string) => {
     const nextPlan = state.plans.find((p) => p.id === nextPlanId)
@@ -1620,7 +1649,7 @@ export default function App() {
     if (!selectedPlanId) return
     const remainingPlans = state.plans.filter((p) => p.id !== selectedPlanId)
     const nextPlan = remainingPlans[0] ?? null
-    await commitPlans(remainingPlans, nextPlan?.id ?? null)
+    await commitPlans(remainingPlans, { selectedPlanId: nextPlan?.id ?? null, deletedPlanIds: [selectedPlanId] })
   }
   const deleteExercise = async (exerciseId: string) => {
     if (supabase && user) {
@@ -1703,7 +1732,7 @@ export default function App() {
       days.splice(to, 0, moved)
       return { ...p, days: normalizePlanDaysData(days) }
     })
-    await commitPlans(nextPlans, plan.id)
+    await commitPlans(nextPlans, { selectedPlanId: plan.id, changedPlanIds: [plan.id] })
     setDraggedPlanDayId(null)
   }
   const deletePlanDay = async (dayId: string) => {
@@ -1713,7 +1742,7 @@ export default function App() {
         ? { ...p, days: normalizePlanDaysData(p.days.filter((day) => day.id !== dayId)) }
         : p,
     )
-    await commitPlans(nextPlans, plan.id)
+    await commitPlans(nextPlans, { selectedPlanId: plan.id, changedPlanIds: [plan.id] })
   }
 
   const saveExercise = async () => {
