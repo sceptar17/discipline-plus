@@ -886,32 +886,34 @@ export default function App() {
   }, [state.plans, user])
   const commitPlans = async (nextPlans: Plan[], nextSelectedPlanId?: string | null) => {
     const normalizedPlans = nextPlans.map((plan0) => ({ ...plan0, days: normalizePlanDaysData(plan0.days) }))
+    setState((current) => ({ ...current, plans: normalizedPlans }))
+    const resolvedPlanId = nextSelectedPlanId === undefined ? selectedPlanId : nextSelectedPlanId
+    const nextPlan = normalizedPlans.find((plan0) => plan0.id === resolvedPlanId) ?? normalizedPlans.find((plan0) => plan0.name === 'Amped') ?? normalizedPlans[0] ?? null
+    setSelectedPlanId(nextPlan?.id ?? null)
+    setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
+
     const ok = await persistPlans(normalizedPlans)
     if (!ok) {
       pushToast('Could not save plans.')
       return false
     }
 
-    setState((current) => ({ ...current, plans: normalizedPlans }))
-    const resolvedPlanId = nextSelectedPlanId === undefined ? selectedPlanId : nextSelectedPlanId
-    const nextPlan = normalizedPlans.find((plan0) => plan0.id === resolvedPlanId) ?? normalizedPlans.find((plan0) => plan0.name === 'Amped') ?? normalizedPlans[0] ?? null
-    setSelectedPlanId(nextPlan?.id ?? null)
-    setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
     return true
   }
   const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string }) => {
     const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
+    setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
+    if (options?.selectedDate) {
+      setSelected(options.selectedDate)
+      setMonth(monthKey(options.selectedDate))
+    }
+
     const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs, state.plans)
     if (!ok) {
       pushToast('Could not save schedule.')
       return false
     }
 
-    setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
-    if (options?.selectedDate) {
-      setSelected(options.selectedDate)
-      setMonth(monthKey(options.selectedDate))
-    }
     return true
   }
   const replaceWorkspaceState = async (next: State) => {
