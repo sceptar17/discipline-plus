@@ -1800,7 +1800,7 @@ export default function App() {
 
       {tab === 'schedule' && <main className="grid">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
-            <div><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}</h2>{selectedDayPlanLabel && <p className="mutedCopy">{selectedDayPlanLabel}</p>}</div>
+            <div><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}{selectedDayPlanLabel && <span className="inlineDateMeta"> | {selectedDayPlanLabel}</span>}</h2></div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
           <label className="field">
             <span>Add exercise to this day</span>
@@ -1874,7 +1874,7 @@ export default function App() {
         <section className="panel scheduleCalendarPanel">
           <div className="todaySummary">
             <div className="row">
-              <div><p className="eyebrow">Today</p><h2>{fmtDay(today)}</h2>{todayPlanLabel && <p className="mutedCopy">{todayPlanLabel}</p>}</div>
+              <div><p className="eyebrow">Today</p><h2>{fmtDay(today)}{todayPlanLabel && <span className="inlineDateMeta"> | {todayPlanLabel}</span>}</h2></div>
               <button className="primary" onClick={() => focusDay(today, true)}>Open</button>
             </div>
             <div className="todayList">
@@ -1914,10 +1914,9 @@ export default function App() {
             const planLabel = scheduledPlanLabel(x, state.runs, state.plans)
             return <button key={x.date} className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : ''].filter(Boolean).join(' ')} onClick={() => focusDay(x.date, true)}>
             <div className="agendaDateRow">
-              <strong>{fmtDay(x.date)}</strong>
+              <strong>{fmtDay(x.date)}{planLabel && <span className="inlineDateMeta"> | {planLabel}</span>}</strong>
               <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${x.items.filter((i) => i.done).length}/${x.items.length}`}</span>
             </div>
-            {planLabel && <p className="mutedCopy">{planLabel}</p>}
             {isRest ? <p className="mutedCopy">- Rest day</p> : <div className="agendaBullets">
               {x.items.map((item) => {
                 const ex = exById[item.exerciseId]

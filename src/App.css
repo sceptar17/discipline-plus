@@ -48,6 +48,7 @@
 .doneEntry { background: var(--surface-strong); color: var(--text-muted); }
 .doneEntry span, .doneEntry strong { text-decoration: line-through; }
 .mutedCopy { color: var(--text-muted); }
+.inlineDateMeta { font-size: .62em; font-weight: 500; color: var(--text-muted); }
 .calendarWrap { padding: 12px; }
 .week, .calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
 .week { margin: 12px 0; color: var(--text-muted); font-size: .82rem; }
