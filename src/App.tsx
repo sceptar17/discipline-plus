@@ -1808,24 +1808,24 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="hero simpleHero">
-        <div className="appHeaderRow">
-          <div>
-            <h1>Discipline +</h1>
-          </div>
-          <div className="profileDock">
-            {hasSupabaseEnv && !user && !authLoading && <button className="pill" onClick={signInWithGoogle}>Sign in</button>}
+      <header className="hero simpleHero appShellHeader">
+        <div className="brandLockup">
+          <span className="brandMark" aria-hidden="true" />
+          <h1>Discipline<span className="brandPlus">+</span></h1>
+        </div>
+
+        <nav className="topNav" aria-label="Primary navigation">
+          {(['schedule', 'exercises', 'plans', 'progress'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{x[0].toUpperCase() + x.slice(1)}</button>)}
+        </nav>
+
+        <div className="profileDock">
+          {hasSupabaseEnv && !user && !authLoading && <button className="pill authButton" onClick={signInWithGoogle}>Sign in</button>}
             {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => setTab('settings')} aria-label="Open profile settings">
               {userAvatar ? <img src={userAvatar} alt={user.email ?? 'Profile'} className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
             </button>}
-            <button className={tab === 'settings' ? 'iconPill activeIconPill' : 'iconPill'} onClick={() => setTab('settings')} aria-label="Open settings">⚙</button>
+            <button className={tab === 'settings' ? 'iconPill activeIconPill iconTextPill' : 'iconPill iconTextPill'} onClick={() => setTab('settings')} aria-label="Open settings">Settings</button>
           </div>
-        </div>
       </header>
-
-      <nav className="nav">
-        {(['schedule', 'exercises', 'plans', 'progress'] as const).map((x) => <button key={x} className={tab === x ? 'pill active' : 'pill'} onClick={() => setTab(x)}>{x[0].toUpperCase() + x.slice(1)}</button>)}
-      </nav>
 
       {tab === 'schedule' && <main className="grid">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
@@ -1864,7 +1864,7 @@ export default function App() {
                     <div className="grow"><h3>{ex.name}</h3><p>{compact(item.type, item.target)}</p></div>
                     {expanded && <span>Hide</span>}
                   </button>
-                  <button className="iconPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}>🗑</button>
+                  <button className="iconPill iconTextPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}>Del</button>
                 </div>
                 {expanded && <>
                   <div className="detailCompactRow">
@@ -1950,7 +1950,7 @@ export default function App() {
               {x.items.map((item) => {
                 const ex = exById[item.exerciseId]
                 if (!ex) return null
-                return <div key={item.id} className="agendaBullet">{item.done ? '• ' : '• '}{ex.name} | {sum(item.type, item.target)}</div>
+                return <div key={item.id} className="agendaBullet">- {ex.name} | {sum(item.type, item.target)}</div>
               })}
             </div>}
           </button>
@@ -2015,7 +2015,7 @@ export default function App() {
           <div><span className="fieldLabel">Reference choices</span><div className="chips">{(Object.keys(RM_LABEL) as RM[]).map((r) => { const on = exerciseForm.refs.includes(r); return <button key={r} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, refs: on ? x.refs.filter((y) => y !== r) : [...x.refs, r] }))}>{RM_LABEL[r]}</button> })}</div></div>
           <div className="nav">
             <button className="primary" onClick={saveExercise}>{selectedExerciseId ? 'Save changes' : 'Create exercise'}</button>
-            {selectedExerciseId && <button className="pill" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: 'Delete exercise?', body: 'This will remove the exercise from the library, plans, scheduled days, and progress history.' })}>Delete exercise</button>}
+            {selectedExerciseId && <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: 'Delete exercise?', body: 'This will remove the exercise from the library, plans, scheduled days, and progress history.' })}>Delete exercise</button>}
           </div>
         </section>
       </main>}
@@ -2029,7 +2029,7 @@ export default function App() {
           <div className="stack">
             {state.plans.map((p) => <div key={p.id} className={selectedPlanId === p.id ? 'listItem activeItem planListRow' : 'listItem planListRow'}>
               <button className="planListButton" onClick={() => selectPlan(p.id)}><strong>{p.name}</strong></button>
-              <button className="iconPill" onClick={() => { setApplyPlanId(p.id); setApplyStartDate(today) }} aria-label={`Apply ${p.name}`}>Apply</button>
+              <button className="iconPill iconTextPill softActionPill" onClick={() => { setApplyPlanId(p.id); setApplyStartDate(today) }} aria-label={`Apply ${p.name}`}>Apply</button>
             </div>)}
           </div>
           {applyPlanId && <div className="card stack">
@@ -2049,7 +2049,7 @@ export default function App() {
               return <article key={r.id} className="card stack">
                 <div className="row">
                   <div><h3>{r.name} | {runStartLabel(r.startDate, today)}</h3><p>{completedDays} of {runDays.length} days complete</p></div>
-                  <div className="dayRowActions"><button className="iconPill" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and all of its scheduled days from the calendar.' })} aria-label={`Delete run ${r.name}`}>🗑</button></div>
+                  <div className="dayRowActions"><button className="iconPill iconTextPill dangerPill" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and all of its scheduled days from the calendar.' })} aria-label={`Delete run ${r.name}`}>Remove</button></div>
                 </div>
                 <div className="progressTrack" aria-label={`${progress}% complete`}>
                   <div className="progressFill" style={{ width: `${progress}%` }} />
@@ -2064,7 +2064,7 @@ export default function App() {
             <label className="field"><span>Focus</span><textarea rows={2} value={planForm.focus} onChange={(e) => setPlanForm((x) => ({ ...x, focus: e.target.value }))} /></label>
             <div className="nav">
               <button className="primary" onClick={savePlanMeta}>Save plan</button>
-              <button className="pill" onClick={() => selectedPlanId && setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'This deletes the plan template. Existing active runs stay unless you remove them separately.' })}>Delete plan</button>
+              <button className="pill dangerPill" onClick={() => selectedPlanId && setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'This deletes the plan template. Existing active runs stay unless you remove them separately.' })}>Delete plan</button>
             </div>
             {plan.days.length === 0 && <button className="addDayButton" onClick={() => addPlanDayAt(0)}>+ Add day</button>}
             {plan.days.map((pd, index) => <div key={pd.id} className="planDayStack">
@@ -2085,7 +2085,7 @@ export default function App() {
                   </button>
                   <div className="dayRowActions">
                     <button className="iconPill" onClick={() => addPlanDayAt(index + 1)} aria-label={`Add day after ${pd.label}`}>+</button>
-                    <button className="iconPill" onClick={() => deletePlanDay(pd.id)} aria-label={`Delete ${pd.label}`}>🗑</button>
+                    <button className="iconPill iconTextPill dangerPill" onClick={() => deletePlanDay(pd.id)} aria-label={`Delete ${pd.label}`}>Delete</button>
                   </div>
                 </div>
                 {expandedPlanDays[pd.id] && <>
@@ -2113,7 +2113,7 @@ export default function App() {
                       <button className="exerciseToggle" onClick={() => setExpandedPlanItems((current) => ({ ...current, [it.id]: !expanded }))}>
                         <div className="grow"><strong>{ex.name}</strong><p>{ex.name} | {sum(it.type, it.target)}</p></div>
                       </button>
-                      <button className="pill" onClick={() => removePlanItem(pd.id, it.id)}>Remove</button>
+                      <button className="pill dangerPill" onClick={() => removePlanItem(pd.id, it.id)}>Remove</button>
                     </div>
                     {expanded && <>
                       <label className="field"><span>Target type</span><select value={it.type} onChange={(e) => updatePlanItem(pd.id, it.id, (x) => ({ ...x, type: e.target.value as TT, target: blank(e.target.value as TT) }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
@@ -2194,8 +2194,8 @@ export default function App() {
                     <p>{metricDisplay(progressExercise.progressMetric, entry)} | {sum(entry.type, entry.target)}</p>
                   </div>
                   <div className="dayRowActions">
-                    {canOpenDay && <button className="iconPill" onClick={() => openLogDay(entry)}>Open day</button>}
-                    <button className="iconPill" onClick={() => isEditing ? cancelLogEdit() : beginLogEdit(entry)}>{isEditing ? 'Close' : 'Edit'}</button>
+                    {canOpenDay && <button className="iconPill iconTextPill softActionPill" onClick={() => openLogDay(entry)}>Open day</button>}
+                    <button className="iconPill iconTextPill softActionPill" onClick={() => isEditing ? cancelLogEdit() : beginLogEdit(entry)}>{isEditing ? 'Close' : 'Edit'}</button>
                   </div>
                 </div>
                 {isEditing && <div className="stack compactStack">
@@ -2242,15 +2242,15 @@ export default function App() {
             </div>
             <div className="card stack">
               <div><strong>Reset progress history</strong><p>This clears completion status, logged times, weights, counts, and progress history while keeping exercises, plans, and the schedule structure.</p></div>
-              <button className="pill" onClick={() => setConfirmState({ kind: 'reset-progress-data', title: 'Reset progress history?', body: 'This clears completion logs, PBs, and checked-off progress across the app.' })}>Reset progress</button>
+              <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-progress-data', title: 'Reset progress history?', body: 'This clears completion logs, PBs, and checked-off progress across the app.' })}>Reset progress</button>
             </div>
             <div className="card stack">
               <div><strong>Reset schedule and active runs</strong><p>This removes calendar days and active runs but keeps your exercise library, templates, and saved progress logs not tied to the schedule.</p></div>
-              <button className="pill" onClick={() => setConfirmState({ kind: 'reset-schedule-data', title: 'Reset schedule and active runs?', body: 'This will clear the calendar and remove active runs.' })}>Reset schedule</button>
+              <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-schedule-data', title: 'Reset schedule and active runs?', body: 'This will clear the calendar and remove active runs.' })}>Reset schedule</button>
             </div>
             <div className="card stack">
               <div><strong>Reset the app</strong><p>This resets the app back to a clean starting state.</p></div>
-              <button className="pill" onClick={() => setConfirmState({ kind: 'reset-all-data', title: 'Reset all app data?', body: 'This will remove exercises, plans, schedule data, active runs, and progress history.' })}>Reset everything</button>
+              <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-all-data', title: 'Reset all app data?', body: 'This will remove exercises, plans, schedule data, active runs, and progress history.' })}>Reset everything</button>
             </div>
           </>}
           {settingsSection === 'integrations' && <div className="stack">
@@ -2276,7 +2276,7 @@ export default function App() {
               <p>{hasSupabaseEnv ? (authLoading ? 'Checking your current session.' : user ? `Signed in as ${user.email ?? 'user'}` : 'Ready for Google sign-in.') : 'Supabase is not configured for this build.'}</p>
               {hasSupabaseEnv && <div className="nav">
                 {!user && !authLoading && <button className="primary" onClick={signInWithGoogle}>Continue with Google</button>}
-                {user && <button className="pill" onClick={signOut}>Sign out</button>}
+                {user && <button className="pill dangerPill" onClick={signOut}>Sign out</button>}
               </div>}
             </div>
             <div className="card stack">
