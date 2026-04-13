@@ -1740,12 +1740,17 @@ export default function App() {
         },
       })
       if (error) {
-        pushToast('Could not analyze that spreadsheet.')
+        pushToast(`Could not analyze that spreadsheet. ${error.message}`)
+        return
+      }
+      if (data && typeof data === 'object' && 'error' in data) {
+        const details = typeof (data as { details?: unknown }).details === 'string' ? ` ${(data as { details: string }).details}` : ''
+        pushToast(`${String((data as { error: unknown }).error)}${details}`)
         return
       }
       const parsed = parsedAnalysisFromResponse(data)
       if (!parsed) {
-        pushToast('The spreadsheet analysis came back in an unexpected format.')
+        pushToast(`The spreadsheet analysis came back in an unexpected format. ${JSON.stringify(data).slice(0, 180)}`)
         return
       }
       setImportWorkbook(workbook)
