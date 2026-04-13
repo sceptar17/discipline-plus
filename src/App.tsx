@@ -492,6 +492,14 @@ function runStartLabel(startDate: string, today: string) {
   return `Starting today (${fmtShort(startDate)})`
 }
 
+function runDisplayName(run: Run, plans: Plan[], today: string) {
+  const plan = run.planId ? plans.find((entry) => entry.id === run.planId) : undefined
+  const cleanedRunName = run.name.replace(/\s+starting\s+.+$/i, '').trim()
+  const baseName = plan?.name ?? (cleanedRunName || run.name)
+  const startLabel = runStartLabel(run.startDate, today).toLowerCase()
+  return `${baseName} ${startLabel}`
+}
+
 function scheduledPlanLabel(day: Day, runs: Run[], plans: Plan[]) {
   if (!day.runId || !day.dayNo) return ''
   const run = runs.find((entry) => entry.id === day.runId)
@@ -1002,7 +1010,6 @@ export default function App() {
       if (!plan0) continue
 
       const planDayRows = dayRows.filter((row) => row.plan_id === planId)
-      const nextDayIds = planDayRows.map((row) => row.id)
       const nextItemRows = normalizePlanDaysData(plan0.days).flatMap((day0) => day0.items.map((item) => ({
         id: item.id,
         user_id: user.id,
@@ -1015,26 +1022,18 @@ export default function App() {
 
       const { data: currentPlanDays } = await client.from('plan_days').select('id').eq('user_id', user.id).eq('plan_id', planId)
       const currentDayIds = (currentPlanDays ?? []).map((row) => row.id)
-      let currentPlanItems: Array<{ id: string }> = []
       if (currentDayIds.length) {
-        const { data } = await client.from('plan_items').select('id').eq('user_id', user.id).in('plan_day_id', currentDayIds)
-        currentPlanItems = data ?? []
-      }
-
-      const removedItemIds = currentPlanItems.map((row) => row.id).filter((id0) => !nextItemRows.some((row) => row.id === id0))
-      if (removedItemIds.length) {
-        const { error } = await client.from('plan_items').delete().eq('user_id', user.id).in('id', removedItemIds)
+        const { error } = await client.from('plan_items').delete().eq('user_id', user.id).in('plan_day_id', currentDayIds)
         if (error) {
-          console.error('plan item delete failed', error)
+          console.error('plan item reset failed', error)
           return false
         }
       }
 
-      const removedDayIds = currentDayIds.filter((id0) => !nextDayIds.includes(id0))
-      if (removedDayIds.length) {
-        const { error } = await client.from('plan_days').delete().eq('user_id', user.id).in('id', removedDayIds)
+      if (currentDayIds.length) {
+        const { error } = await client.from('plan_days').delete().eq('user_id', user.id).in('id', currentDayIds)
         if (error) {
-          console.error('plan day delete failed', error)
+          console.error('plan day reset failed', error)
           return false
         }
       }
@@ -2323,7 +2322,7 @@ export default function App() {
           <div className="row">
             <div><p className="eyebrow">Plans</p><h2>Your plans</h2></div>
             <div className="nav">
-              <button className="pill" onClick={() => planImportInputRef.current?.click()} disabled={importBusy || !hasSupabaseEnv}>{importBusy ? 'Analyzing...' : 'Import spreadsheet'}</button>
+              <button className="pill" onClick={() => planImportInputRef.current?.click()} disabled={importBusy || !hasSupabaseEnv}>{importBusy ? 'Analyzing...' : 'Import'}</button>
               <button className="pill" onClick={startNewPlan}>New plan</button>
             </div>
           </div>
@@ -2394,7 +2393,7 @@ export default function App() {
               const progress = runDays.length ? Math.round((completedDays / runDays.length) * 100) : 0
               return <article key={r.id} className="card stack">
                 <div className="row">
-                  <div><h3>{r.name} | {runStartLabel(r.startDate, today)}</h3><p>{completedDays} of {runDays.length} days complete</p></div>
+                  <div><h3>{runDisplayName(r, state.plans, today)}</h3><p>{completedDays} of {runDays.length} days complete</p></div>
                   <div className="dayRowActions"><button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })} aria-label={`Remove active run ${r.name}`}><TrashIcon /></button></div>
                 </div>
                 <div className="progressTrack" aria-label={`${progress}% complete`}>
