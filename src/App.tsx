@@ -1915,24 +1915,28 @@ export default function App() {
   return (
     <div className="app">
       <header className="hero simpleHero appShellHeader">
-        <div className="brandLockup">
-          <span className="brandMark" aria-hidden="true" />
-          <h1>Discipline<span className="brandPlus">+</span></h1>
+        <div className="headerLead">
+          <div className="brandLockup">
+            <span className="brandMark" aria-hidden="true" />
+            <h1>Discipline<span className="brandPlus">+</span></h1>
+          </div>
+
+          <div className="profileDock">
+            {hasSupabaseEnv && !user && !authLoading && <button className="pill authButton" onClick={signInWithGoogle}>Sign in</button>}
+            {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => setTab('settings')} aria-label="Open profile settings">
+              {userAvatar ? <img src={userAvatar} alt={user.email ?? 'Profile'} className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
+            </button>}
+            <button className={tab === 'settings' ? 'iconPill activeIconPill settingsButton' : 'iconPill settingsButton'} onClick={() => setTab('settings')} aria-label="Open settings">
+              <svg className="settingsGlyph" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 8.7a3.3 3.3 0 1 0 0 6.6a3.3 3.3 0 0 0 0-6.6Zm9 3.3l-2.1-.7c-.1-.4-.2-.8-.4-1.2l1-2L17.9 6l-2 .9c-.4-.2-.8-.3-1.2-.4L14 4h-4l-.7 2.5c-.4.1-.8.2-1.2.4l-2-.9L4.5 8.1l1 2c-.2.4-.3.8-.4 1.2L3 12l.7 2.1c.1.4.2.8.4 1.2l-1 2L6.1 18l2-.9c.4.2.8.3 1.2.4L10 20h4l.7-2.5c.4-.1.8-.2 1.2-.4l2 .9l1.6-1.9l-1-2c.2-.4.3-.8.4-1.2L21 12Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <nav className="topNav" aria-label="Primary navigation">
           {(['schedule', 'exercises', 'plans', 'progress'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{{ schedule: 'Schedule', exercises: 'Library', plans: 'Plans', progress: 'Progress' }[x]}</button>)}
         </nav>
-
-        <div className="profileDock">
-          {hasSupabaseEnv && !user && !authLoading && <button className="pill authButton" onClick={signInWithGoogle}>Sign in</button>}
-            {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => setTab('settings')} aria-label="Open profile settings">
-              {userAvatar ? <img src={userAvatar} alt={user.email ?? 'Profile'} className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
-            </button>}
-            <button className={tab === 'settings' ? 'iconPill activeIconPill settingsButton' : 'iconPill settingsButton'} onClick={() => setTab('settings')} aria-label="Open settings">
-              <span className="settingsGlyph" aria-hidden="true">S</span>
-            </button>
-          </div>
       </header>
 
       {tab === 'schedule' && <main className="grid">
@@ -1961,9 +1965,9 @@ export default function App() {
               const progressMetric = effectiveProgressMetric(ex, draft.type)
               const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target: referenceTarget(derivedHistory, ex, r, draft.type, draft.target) } }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, draft.type)}</button>)
               return <article key={item.id} className="card">
-                <div className="row top">
+                <div className="row itemCardRow">
                   <button className={['ring', ex.kind === 'habit' ? 'habitRing' : '', item.done ? 'done' : ''].filter(Boolean).join(' ')} onClick={() => toggleDone(selected, item)} aria-label={`Mark ${ex.name} complete`}><span /></button>
-                  <button className="exerciseToggle" onClick={() => {
+                  <button className="exerciseToggle itemCardToggle" onClick={() => {
                     if (!expanded) {
                       setItemDrafts((current) => current[item.id] ? current : { ...current, [item.id]: makeItemDraft(item, ex) })
                     }
@@ -1978,7 +1982,7 @@ export default function App() {
                     </div>
                     {expanded && <span>Hide</span>}
                   </button>
-                  <button className="iconPill iconTextPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}>Del</button>
+                  <button className="iconPill compactActionPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}>X</button>
                 </div>
                 {expanded && <>
                   <div className="detailCompactRow">
@@ -2016,10 +2020,13 @@ export default function App() {
 
         <section className="panel scheduleCalendarPanel">
           <div className="todaySummary">
-            <div className="row">
-              <div><p className="eyebrow">Today</p><h2>{fmtDay(today)}{todayPlanLabel && <span className="inlineDateMeta"> | {todayPlanLabel}</span>}</h2></div>
-              <button className="primary" onClick={() => focusDay(today, true)}>Open</button>
-            </div>
+            <button className="todaySummaryButton" onClick={() => focusDay(today, true)}>
+              <div className="todaySummaryHeading">
+                <p className="eyebrow">Today</p>
+                <h2>{fmtDay(today)}</h2>
+                {todayPlanLabel && <p className="dayDetailMeta">{todayPlanLabel}</p>}
+              </div>
+            </button>
             <div className="todayList">
               {todayItems.length === 0 && <p className="mutedCopy">No exercises or habits scheduled for today.</p>}
               {todayItems.map((item) => {

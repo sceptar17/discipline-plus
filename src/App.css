@@ -26,9 +26,16 @@
 
 .simpleHero {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr;
   gap: 18px;
   align-items: center;
+}
+
+.headerLead {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  min-width: fit-content;
 }
 
 .appShellHeader {
@@ -77,7 +84,7 @@
 }
 
 .topNav {
-  justify-self: center;
+  justify-self: end;
   display: inline-flex;
   gap: 6px;
   padding: 4px;
@@ -89,8 +96,7 @@
 .profileDock {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  justify-self: end;
+  gap: 8px;
   min-width: fit-content;
 }
 
@@ -162,8 +168,10 @@
 
 .avatarButton,
 .iconPill {
-  min-width: 42px;
-  min-height: 42px;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -184,9 +192,8 @@
 }
 
 .settingsGlyph {
-  font-size: 0.82rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  width: 17px;
+  height: 17px;
 }
 
 .avatarImage {
@@ -218,8 +225,13 @@
 }
 
 .panel > .row:first-child {
+  flex-direction: row;
   align-items: flex-start;
   padding-bottom: 4px;
+}
+
+.card > .row:first-child {
+  flex-direction: row;
 }
 
 .today,
@@ -339,6 +351,19 @@
   color: var(--accent-soft);
 }
 
+.panel h2,
+.todaySummary h2,
+.scheduleDetailPanel h2 {
+  margin: 0;
+}
+
+.panel h2 {
+  font-family: Bahnschrift, "Arial Narrow", "Franklin Gothic Demi Cond", sans-serif;
+  font-size: clamp(1.45rem, 1.55vw, 1.72rem);
+  line-height: 1.02;
+  letter-spacing: 0.012em;
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -423,6 +448,20 @@
   overflow: hidden;
 }
 
+.todaySummaryButton {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.todaySummaryHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .todaySummary::before {
   content: "";
   position: absolute;
@@ -438,12 +477,12 @@
   text-transform: uppercase;
   font-family: Bahnschrift, "Arial Narrow", "Franklin Gothic Demi Cond", sans-serif;
   letter-spacing: 0.02em;
-  font-size: clamp(1.95rem, 2.6vw, 2.7rem);
-  line-height: 0.95;
+  font-size: clamp(2.08rem, 2.75vw, 2.9rem);
+  line-height: 0.96;
 }
 
 .scheduleDetailPanel h2 {
-  font-size: clamp(1.75rem, 2vw, 2.25rem);
+  font-size: clamp(1.88rem, 2.15vw, 2.4rem);
 }
 
 .dayDetailHeader {
@@ -459,15 +498,18 @@
   font-size: 0.76rem;
 }
 
-.panel h2 {
-  letter-spacing: 0.01em;
-}
-
 .panel h3,
 .card h3,
 .planNameInput {
   color: var(--text-strong);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.012em;
+}
+
+.panel h3,
+.card h3 {
+  margin: 0;
+  font-size: 1.08rem;
+  line-height: 1.15;
 }
 
 .todayList {
@@ -490,6 +532,24 @@
   gap: 12px;
 }
 
+.itemCardRow {
+  align-items: center;
+  gap: 14px;
+}
+
+.itemCardToggle {
+  min-width: 0;
+}
+
+.compactActionPill {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .todayOpenButton {
   flex: 1;
   border: 0;
@@ -498,9 +558,15 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   text-align: left;
   color: inherit;
   font: inherit;
+}
+
+.todayOpenButton span,
+.todayOpenButton strong {
+  line-height: 1.15;
 }
 
 .doneEntry {
@@ -621,7 +687,7 @@
 
 .planDayCard,
 .planExerciseCard {
-  padding: 14px 16px;
+  padding: 16px 18px;
 }
 
 .planDayHeaderRow {
@@ -1025,19 +1091,18 @@ textarea:focus-visible {
 
 @media (max-width: 1120px) {
   .simpleHero {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 1fr;
     justify-items: stretch;
   }
 
+  .headerLead {
+    justify-content: space-between;
+  }
+
   .topNav {
-    grid-column: 1 / -1;
     justify-self: stretch;
     width: 100%;
     overflow-x: visible;
-  }
-
-  .profileDock {
-    justify-self: end;
   }
 
   .grid {
@@ -1063,7 +1128,7 @@ textarea:focus-visible {
   }
 
   .simpleHero {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 1fr;
     gap: 10px;
   }
 
@@ -1097,6 +1162,8 @@ textarea:focus-visible {
   .iconPill {
     min-width: 34px;
     min-height: 34px;
+    width: 34px;
+    height: 34px;
   }
 
   .iconTextPill {
@@ -1115,12 +1182,21 @@ textarea:focus-visible {
   .panel,
   .card,
   .empty {
-    padding: 18px;
+    padding: 17px;
   }
 
   .todaySummary h2,
   .scheduleDetailPanel h2 {
-    font-size: clamp(1.5rem, 7vw, 2rem);
+    font-size: clamp(1.66rem, 6.9vw, 2.15rem);
+  }
+
+  .panel h2 {
+    font-size: 1.34rem;
+  }
+
+  .panel h3,
+  .card h3 {
+    font-size: 1rem;
   }
 
   .scheduleCalendarPanel {
@@ -1152,5 +1228,38 @@ textarea:focus-visible {
 
   .day {
     min-height: 72px;
+  }
+
+  .todaySummary {
+    gap: 14px;
+    margin-bottom: 18px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .todayEntry {
+    padding: 12px 14px;
+  }
+
+  .todayOpenButton {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .itemCardRow {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .itemCardToggle {
+    align-items: flex-start;
+  }
+
+  .compactActionPill {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
   }
 }
