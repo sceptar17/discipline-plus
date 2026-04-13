@@ -677,11 +677,13 @@ export default function App() {
   const [draggedPlanDayId, setDraggedPlanDayId] = useState<string | null>(null)
   const [applyPlanId, setApplyPlanId] = useState<string | null>(null)
   const [applyStartDate, setApplyStartDate] = useState(today)
+  const [keepCompletedPlanDays, setKeepCompletedPlanDays] = useState(true)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [confirmState, setConfirmState] = useState<ConfirmState>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const dayDetailRef = useRef<HTMLElement | null>(null)
   const exerciseDetailRef = useRef<HTMLElement | null>(null)
+  const planDetailRef = useRef<HTMLElement | null>(null)
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
   const authUserRef = useRef<string | null>(null)
   const scheduleSaveTimerRef = useRef<number | null>(null)
@@ -768,7 +770,7 @@ export default function App() {
     setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
   }, [progressExercises])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
-  const plan = state.plans.find((p) => p.id === selectedPlanId) ?? state.plans[0]
+  const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
   const todayDay = today ? normalizeScheduleDay(dayByDate[today] ?? { date: today, notes: '', rest: true, skipped: false, items: [] }) : undefined
   const todayItems = todayDay?.items ?? []
@@ -1352,6 +1354,9 @@ export default function App() {
   const focusExerciseEditor = () => {
     window.setTimeout(() => exerciseDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
   }
+  const focusPlanEditor = () => {
+    window.setTimeout(() => planDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
+  }
   const userAvatar = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null
   const signInWithGoogle = async () => {
     if (!supabase) return
@@ -1638,18 +1643,41 @@ export default function App() {
   const startNewPlan = async () => {
     const nextPlan: Plan = { id: id('plan'), name: 'New plan', focus: '', days: [] }
     await commitPlans([...state.plans, nextPlan], { selectedPlanId: nextPlan.id, changedPlanIds: [nextPlan.id] })
+    focusPlanEditor()
   }
   const selectPlan = (nextPlanId: string) => {
     const nextPlan = state.plans.find((p) => p.id === nextPlanId)
     if (!nextPlan) return
     setSelectedPlanId(nextPlanId)
     setPlanForm(formFromPlan(nextPlan))
+    focusPlanEditor()
   }
-  const deletePlan = async () => {
-    if (!selectedPlanId) return
-    const remainingPlans = state.plans.filter((p) => p.id !== selectedPlanId)
+  const deletePlan = async (planId: string, options?: { keepCompletedDays?: boolean }) => {
+    const keepCompletedDays = options?.keepCompletedDays ?? false
+    const remainingPlans = state.plans.filter((p) => p.id !== planId)
+    const removedRunIds = new Set(state.runs.filter((run) => run.planId === planId).map((run) => run.id))
+    const keptDays: Day[] = []
+    const removedItemIds = new Set<string>()
+
+    state.schedule.forEach((day0) => {
+      if (!day0.runId || !removedRunIds.has(day0.runId)) return
+      const isCompleted = day0.items.length > 0 && day0.items.every((item) => item.done)
+      if (keepCompletedDays && isCompleted) {
+        keptDays.push(normalizeScheduleDay({ ...day0, runId: undefined, dayNo: undefined, skipped: false }))
+        return
+      }
+      day0.items.forEach((item) => removedItemIds.add(item.id))
+    })
+
+    const nextSchedule = [...state.schedule.filter((day0) => !day0.runId || !removedRunIds.has(day0.runId)), ...keptDays]
+      .sort((a, b) => a.date.localeCompare(b.date))
+    const nextRuns = state.runs.filter((run) => run.planId !== planId)
+    const nextLogs = state.logs.filter((entry) => !entry.sourceItemId || !removedItemIds.has(entry.sourceItemId))
     const nextPlan = remainingPlans[0] ?? null
-    await commitPlans(remainingPlans, { selectedPlanId: nextPlan?.id ?? null, deletedPlanIds: [selectedPlanId] })
+
+    const plansOk = await commitPlans(remainingPlans, { selectedPlanId: nextPlan?.id ?? null, deletedPlanIds: [planId] })
+    if (!plansOk) return
+    await commitScheduleState(nextSchedule, nextRuns, nextLogs)
   }
   const deleteExercise = async (exerciseId: string) => {
     if (supabase && user) {
@@ -1706,7 +1734,7 @@ export default function App() {
   const confirmAction = async () => {
     if (!confirmState) return
     if (confirmState.kind === 'delete-run') await deleteRun(confirmState.runId)
-    if (confirmState.kind === 'delete-plan') await deletePlan()
+    if (confirmState.kind === 'delete-plan') await deletePlan(confirmState.planId, { keepCompletedDays: keepCompletedPlanDays })
     if (confirmState.kind === 'delete-exercise') await deleteExercise(confirmState.exerciseId)
     if (confirmState.kind === 'import-data') await importData()
     if (confirmState.kind === 'reset-all-data') await resetAllData()
@@ -1717,6 +1745,9 @@ export default function App() {
   const cancelConfirm = () => {
     if (confirmState?.kind === 'import-data') {
       setPendingImport(null)
+    }
+    if (confirmState?.kind === 'delete-plan') {
+      setKeepCompletedPlanDays(true)
     }
     setConfirmState(null)
   }
@@ -1740,6 +1771,23 @@ export default function App() {
     const nextPlans = state.plans.map((p) =>
       p.id === plan.id
         ? { ...p, days: normalizePlanDaysData(p.days.filter((day) => day.id !== dayId)) }
+        : p,
+    )
+    await commitPlans(nextPlans, { selectedPlanId: plan.id, changedPlanIds: [plan.id] })
+  }
+  const duplicatePlanDay = async (dayId: string) => {
+    if (!plan) return
+    const dayIndex = plan.days.findIndex((day0) => day0.id === dayId)
+    if (dayIndex < 0) return
+    const sourceDay = plan.days[dayIndex]
+    const duplicatedDay: PlanDay = {
+      ...sourceDay,
+      id: id('pd'),
+      items: sourceDay.items.map((item) => ({ ...item, id: id('pi'), target: clone(item.target) })),
+    }
+    const nextPlans = state.plans.map((p) =>
+      p.id === plan.id
+        ? { ...p, days: normalizePlanDaysData([...p.days.slice(0, dayIndex + 1), duplicatedDay, ...p.days.slice(dayIndex + 1)]) }
         : p,
     )
     await commitPlans(nextPlans, { selectedPlanId: plan.id, changedPlanIds: [plan.id] })
@@ -1823,17 +1871,19 @@ export default function App() {
             {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => setTab('settings')} aria-label="Open profile settings">
               {userAvatar ? <img src={userAvatar} alt={user.email ?? 'Profile'} className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
             </button>}
-            <button className={tab === 'settings' ? 'iconPill activeIconPill iconTextPill' : 'iconPill iconTextPill'} onClick={() => setTab('settings')} aria-label="Open settings">Settings</button>
+            <button className={tab === 'settings' ? 'iconPill activeIconPill settingsButton' : 'iconPill settingsButton'} onClick={() => setTab('settings')} aria-label="Open settings">
+              <span className="settingsGlyph" aria-hidden="true">S</span>
+            </button>
           </div>
       </header>
 
       {tab === 'schedule' && <main className="grid">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
-            <div><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}{selectedDayPlanLabel && <span className="inlineDateMeta"> | {selectedDayPlanLabel}</span>}</h2></div>
+            <div className="dayDetailHeader"><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}</h2>{selectedDayPlanLabel && <p className="dayDetailMeta">{selectedDayPlanLabel}</p>}</div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
-          <label className="field">
-            <span>Add exercise to this day</span>
+          <label className="field addExerciseField">
             <select
+              aria-label="Select exercise to add"
               defaultValue=""
               onChange={(event) => {
                 if (!event.target.value) return
@@ -1841,7 +1891,7 @@ export default function App() {
                 event.target.value = ''
               }}
             >
-              <option value="">Select exercise</option>
+              <option value="">Select exercise to add...</option>
               {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}</option>)}
             </select>
           </label>
@@ -1861,7 +1911,12 @@ export default function App() {
                     }
                     setExpandedItems((current) => ({ ...current, [item.id]: !expanded }))
                   }}>
-                    <div className="grow"><h3>{ex.name}</h3><p>{compact(item.type, item.target)}</p></div>
+                    <div className="grow itemSummaryBlock">
+                      <div className="itemTitleRow">
+                        <h3>{ex.name}</h3>
+                        <span className="itemTargetBadge">{compact(item.type, item.target)}</span>
+                      </div>
+                    </div>
                     {expanded && <span>Hide</span>}
                   </button>
                   <button className="iconPill iconTextPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}>Del</button>
@@ -1966,6 +2021,10 @@ export default function App() {
         <div className="confirmCard">
           <h3>{confirmState.title}</h3>
           <p>{confirmState.body}</p>
+          {confirmState.kind === 'delete-plan' && <label className="inline confirmOption">
+            <input type="checkbox" checked={keepCompletedPlanDays} onChange={(e) => setKeepCompletedPlanDays(e.target.checked)} />
+            <span>Keep already completed scheduled days as standalone history</span>
+          </label>}
           <div className="nav">
             <button className="primary" onClick={confirmAction}>Confirm</button>
             <button className="pill" onClick={cancelConfirm}>Cancel</button>
@@ -2020,10 +2079,10 @@ export default function App() {
         </section>
       </main>}
 
-      {tab === 'plans' && <main className="grid">
+      {tab === 'plans' && <main className="stack plansPage">
         <section className="panel stack">
           <div className="row">
-            <div><p className="eyebrow">Plans</p><h2>Select a plan to manage it</h2></div>
+            <div><p className="eyebrow">Plans</p><h2>Your plans</h2></div>
             <button className="pill" onClick={startNewPlan}>New plan</button>
           </div>
           <div className="stack">
@@ -2058,13 +2117,17 @@ export default function App() {
             })}
           </div>
         </section>
-        <section className="panel stack">
+        {plan && <section ref={planDetailRef} className="panel stack planEditorPanel">
           {plan ? <>
             <div><p className="eyebrow">Manage plan</p><input className="planNameInput" value={planForm.name} onChange={(e) => setPlanForm((x) => ({ ...x, name: e.target.value }))} aria-label="Plan name" /></div>
             <label className="field"><span>Focus</span><textarea rows={2} value={planForm.focus} onChange={(e) => setPlanForm((x) => ({ ...x, focus: e.target.value }))} /></label>
             <div className="nav">
               <button className="primary" onClick={savePlanMeta}>Save plan</button>
-              <button className="pill dangerPill" onClick={() => selectedPlanId && setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'This deletes the plan template. Existing active runs stay unless you remove them separately.' })}>Delete plan</button>
+              <button className="pill dangerPill" onClick={() => {
+                if (!selectedPlanId) return
+                setKeepCompletedPlanDays(true)
+                setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'Remove this plan template and its scheduled run days. You can keep completed days as standalone history or remove everything tied to the plan.' })
+              }}>Delete plan</button>
             </div>
             {plan.days.length === 0 && <button className="addDayButton" onClick={() => addPlanDayAt(0)}>+ Add day</button>}
             {plan.days.map((pd, index) => <div key={pd.id} className="planDayStack">
@@ -2076,15 +2139,16 @@ export default function App() {
                 onDrop={() => movePlanDay(pd.id)}
                 onDragEnd={() => setDraggedPlanDayId(null)}
               >
-                <div className="row">
+                <div className="row planDayHeaderRow">
                   <button className="exerciseToggle" onClick={() => setExpandedPlanDays((current) => ({ ...current, [pd.id]: !(current[pd.id] ?? false) }))}>
-                    <div className="grow">
+                    <div className="grow planDaySummary">
                       <h3>{pd.label}</h3>
                       <p>{pd.items.length ? pd.items.map((it) => exById[it.exerciseId]?.name ?? 'Exercise').join(', ') : 'Rest day'}</p>
                     </div>
                   </button>
                   <div className="dayRowActions">
                     <button className="iconPill" onClick={() => addPlanDayAt(index + 1)} aria-label={`Add day after ${pd.label}`}>+</button>
+                    <button className="iconPill iconTextPill softActionPill" onClick={() => duplicatePlanDay(pd.id)} aria-label={`Duplicate ${pd.label}`}>Copy</button>
                     <button className="iconPill iconTextPill dangerPill" onClick={() => deletePlanDay(pd.id)} aria-label={`Delete ${pd.label}`}>Delete</button>
                   </div>
                 </div>
@@ -2129,8 +2193,11 @@ export default function App() {
                 </>}
               </article>
             </div>)}
-          </> : <div className="empty">No plans yet. Create one from the left.</div>}
-        </section>
+          </> : null}
+        </section>}
+        {!plan && <section className="panel empty planEmptyState">
+          <p>Select a plan to review or edit it.</p>
+        </section>}
       </main>}
 
       {tab === 'progress' && <main className="grid">

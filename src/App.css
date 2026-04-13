@@ -91,6 +91,7 @@
   align-items: center;
   gap: 10px;
   justify-self: end;
+  min-width: fit-content;
 }
 
 .avatarButton,
@@ -177,11 +178,23 @@
   text-transform: uppercase;
 }
 
+.settingsButton {
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.settingsGlyph {
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
 .avatarImage {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: 999px;
 }
 
 .avatarFallback {
@@ -229,6 +242,22 @@
   grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.74fr);
   gap: 18px;
   align-items: start;
+}
+
+.plansPage {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.planEditorPanel {
+  scroll-margin-top: 16px;
+}
+
+.planEmptyState {
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 160px;
 }
 
 .scheduleCalendarPanel {
@@ -343,9 +372,25 @@
   min-height: 120px;
 }
 
+.addExerciseField {
+  gap: 0;
+}
+
 .inline {
   flex-direction: row;
   align-items: center;
+}
+
+.confirmOption {
+  justify-content: flex-start;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.confirmOption input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
 }
 
 .inline input {
@@ -399,6 +444,19 @@
 
 .scheduleDetailPanel h2 {
   font-size: clamp(1.75rem, 2vw, 2.25rem);
+}
+
+.dayDetailHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dayDetailMeta {
+  color: var(--accent-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.76rem;
 }
 
 .panel h2 {
@@ -564,6 +622,18 @@
 .planDayCard,
 .planExerciseCard {
   padding: 14px 16px;
+}
+
+.planDayHeaderRow {
+  align-items: flex-start;
+}
+
+.planDaySummary {
+  text-align: left;
+}
+
+.planDaySummary p {
+  color: var(--text);
 }
 
 .addDayButton {
@@ -862,6 +932,26 @@
   color: var(--text-strong);
 }
 
+.itemSummaryBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.itemTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.itemTargetBadge {
+  color: var(--accent-deep);
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .dayActions {
   padding-top: 8px;
   border-top: 1px solid var(--border);
@@ -893,27 +983,23 @@ textarea:focus-visible {
 
 @media (max-width: 1120px) {
   .simpleHero {
-    grid-template-columns: 1fr;
-    justify-items: start;
+    grid-template-columns: auto 1fr auto;
+    justify-items: stretch;
   }
 
   .topNav {
+    grid-column: 1 / -1;
     justify-self: stretch;
     width: 100%;
-    overflow-x: auto;
+    overflow-x: visible;
   }
 
   .profileDock {
-    justify-self: start;
+    justify-self: end;
   }
 
   .grid {
     grid-template-columns: 1fr;
-  }
-
-  .scheduleCalendarPanel,
-  .scheduleDetailPanel {
-    order: initial;
   }
 
   .scheduleDetailPanel {
@@ -934,6 +1020,55 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .simpleHero {
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+  }
+
+  .brandLockup {
+    gap: 8px;
+  }
+
+  .brandMark {
+    width: 32px;
+    height: 32px;
+  }
+
+  .topNav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .topNavButton {
+    min-width: 0;
+    padding: 0.68rem 0.35rem;
+    font-size: 0.83rem;
+  }
+
+  .profileDock {
+    gap: 6px;
+  }
+
+  .avatarButton,
+  .iconPill {
+    min-width: 34px;
+    min-height: 34px;
+  }
+
+  .iconTextPill {
+    min-width: 34px;
+    padding: 0 8px;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+  }
+
+  .settingsButton {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
   .todaySummary,
   .panel,
   .card,
@@ -944,6 +1079,14 @@ textarea:focus-visible {
   .todaySummary h2,
   .scheduleDetailPanel h2 {
     font-size: clamp(1.5rem, 7vw, 2rem);
+  }
+
+  .scheduleCalendarPanel {
+    order: 1;
+  }
+
+  .scheduleDetailPanel {
+    order: 2;
   }
 
   .detailCompactRow {
