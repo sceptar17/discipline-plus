@@ -1740,7 +1740,25 @@ export default function App() {
         },
       })
       if (error) {
-        pushToast(`Could not analyze that spreadsheet. ${error.message}`)
+        let detail = error.message
+        const context = (error as { context?: Response }).context
+        if (context) {
+          try {
+            const payload = await context.json() as { error?: unknown; details?: unknown }
+            detail = typeof payload.details === 'string'
+              ? `${typeof payload.error === 'string' ? payload.error : 'Function error'} ${payload.details}`
+              : typeof payload.error === 'string'
+                ? payload.error
+                : JSON.stringify(payload)
+          } catch {
+            try {
+              detail = await context.text()
+            } catch {
+              detail = error.message
+            }
+          }
+        }
+        pushToast(`Could not analyze that spreadsheet. ${detail}`)
         return
       }
       if (data && typeof data === 'object' && 'error' in data) {
