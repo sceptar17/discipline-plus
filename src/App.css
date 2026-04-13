@@ -889,6 +889,10 @@
   border-color: rgba(243, 107, 0, 0.7);
 }
 
+.ring.habitRing {
+  border-color: rgba(62, 179, 139, 0.78);
+}
+
 .ring span {
   inline-size: 18px;
   block-size: 18px;
@@ -898,6 +902,10 @@
 
 .ring.done span {
   background: linear-gradient(180deg, #ff8d1d 0%, #f36b00 100%);
+}
+
+.ring.habitRing.done span {
+  background: linear-gradient(180deg, #57d5b0 0%, #1e9f7b 100%);
 }
 
 .ref,
@@ -943,6 +951,40 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.kindBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(62, 179, 139, 0.14);
+  border: 1px solid rgba(62, 179, 139, 0.34);
+  color: #8de5cc;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.subtleBadge {
+  margin-left: 8px;
+}
+
+.listItemContent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.listMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
 }
 
 .itemTargetBadge {

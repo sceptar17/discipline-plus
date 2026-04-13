@@ -3,12 +3,13 @@ import type { User } from '@supabase/supabase-js'
 import './App.css'
 import { hasSupabaseEnv, supabase, supabaseUrl } from './lib/supabase'
 
+type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
 type RM = 'last-result' | 'personal-best'
 type PM = 'count' | 'time' | 'weight'
 type Target = { count?: number; sets?: number; reps?: number; seconds?: number; distance?: number; unit?: 'mi' | 'km'; weight?: number }
 type Result = { seconds?: number; timeText?: string; weight?: number; count?: number; note?: string }
-type Exercise = { id: string; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
+type Exercise = { id: string; kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
 type Item = { id: string; exerciseId: string; type: TT; target: Target; ref: RM; done: boolean; result: Result }
 type Day = { date: string; notes: string; rest: boolean; skipped: boolean; runId?: string; dayNo?: number; items: Item[] }
 type PlanDay = { id: string; label: string; rest: boolean; notes?: string; items: Array<{ id: string; exerciseId: string; type: TT; target: Target; ref: RM }> }
@@ -19,7 +20,7 @@ type LegacyHist = { id: string; exerciseId: string; date: string; type: TT; targ
 type LegacyItem = Omit<Item, 'result'> & { result?: Result; actualSeconds?: number; actualTimeText?: string; actualWeight?: number; actualCount?: number; note?: string }
 type LegacyState = { exercises?: Exercise[]; schedule?: Array<Omit<Day, 'items'> & { items: LegacyItem[] }>; plans?: Plan[]; runs?: Run[]; history?: LegacyHist[]; logs?: Log[] }
 type State = { exercises: Exercise[]; schedule: Day[]; plans: Plan[]; runs: Run[]; logs: Log[] }
-type ExerciseForm = { name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
+type ExerciseForm = { kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
 type PlanForm = { name: string; focus: string }
 type Toast = { id: string; message: string }
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; note: string }
@@ -35,7 +36,9 @@ type ConfirmState =
 
 const KEY = 'fitness-tracker-v1'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const CATEGORY_OPTIONS = ['Bodyweight', 'Dumbbell']
+const EXERCISE_CATEGORY_OPTIONS = ['Bodyweight', 'Dumbbell']
+const HABIT_CATEGORY_OPTIONS = ['Spiritual', 'Mind', 'Home', 'Health']
+const TRACKABLE_KIND_LABEL: Record<TK, string> = { exercise: 'Exercise', habit: 'Habit' }
 const TT_LABEL: Record<TT, string> = { count: 'Count', sets: 'Sets x reps', duration: 'Duration', distance: 'Distance', 'for-time': 'For time', weighted: 'Weighted sets' }
 const RM_LABEL: Record<RM, string> = { 'last-result': 'Last result', 'personal-best': 'Personal best' }
 const PM_LABEL: Record<PM, string> = { count: 'Count', time: 'Time', weight: 'Weight' }
@@ -51,16 +54,35 @@ const fmtSecs = (s?: number) => !s ? '--:--' : `${Math.floor(s / 60)}:${`${s % 6
 const parseSecs = (v: string) => { if (!v.trim()) return undefined; if (v.includes(':')) { const [m, s] = v.split(':').map(Number); return Number.isNaN(m) || Number.isNaN(s) ? undefined : m * 60 + s } const n = Number(v); return Number.isNaN(n) ? undefined : n * 60 }
 const blank = (t: TT): Target => t === 'count' ? { count: 25 } : t === 'sets' ? { sets: 4, reps: 10 } : t === 'duration' ? { seconds: 60 } : t === 'distance' ? { distance: 2, unit: 'mi' } : t === 'for-time' ? { count: 100 } : { sets: 4, reps: 8, weight: 30 }
 const clone = (t: Target) => ({ ...t })
-const sum = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0} reps` : t === 'sets' ? `${x.sets ?? 0} x ${x.reps ?? 0}` : t === 'duration' ? durationShort(x.seconds) : t === 'distance' ? `${x.distance ?? 0} ${x.unit ?? 'mi'}` : t === 'for-time' ? `${x.count ?? 0} reps for time` : `${x.sets ?? 0} x ${x.reps ?? 0} @ ${x.weight ?? 0} lb`
+const sum = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0} count` : t === 'sets' ? `${x.sets ?? 0} x ${x.reps ?? 0}` : t === 'duration' ? durationShort(x.seconds) : t === 'distance' ? `${x.distance ?? 0} ${x.unit ?? 'mi'}` : t === 'for-time' ? `${x.count ?? 0} count for time` : `${x.sets ?? 0} x ${x.reps ?? 0} @ ${x.weight ?? 0} lb`
 const totalCount = (target: Target) => target.count ?? ((target.sets ?? 0) * (target.reps ?? 0))
 const metric = (progressMetric: PM, entry: Pick<Log, 'target' | 'result'>) => progressMetric === 'count' ? entry.result.count ?? totalCount(entry.target) : progressMetric === 'time' ? entry.result.seconds ?? entry.target.seconds : entry.result.weight ?? entry.target.weight
 const durationShort = (seconds?: number) => seconds === undefined ? '0:00' : `${Math.floor(seconds / 60)}:${`${seconds % 60}`.padStart(2, '0')}`
 const compact = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0}` : t === 'sets' ? `${x.sets ?? 0}x${x.reps ?? 0}` : t === 'duration' ? durationShort(x.seconds) : t === 'distance' ? `${x.distance ?? 0} ${x.unit === 'km' ? 'km' : 'miles'}` : t === 'for-time' ? `${x.count ?? 0}` : `${x.sets ?? 0}x${x.reps ?? 0}`
-const emptyExerciseForm = (): ExerciseForm => ({ name: '', category: CATEGORY_OPTIONS[0], equipment: '', notes: '', defaultType: 'count', allowed: ['count'], target: blank('count'), refs: ['last-result', 'personal-best'], progressMetric: 'count' })
-const formFromExercise = (exercise: Exercise): ExerciseForm => ({ name: exercise.name, category: exercise.category, equipment: exercise.equipment, notes: exercise.notes, defaultType: exercise.defaultType, allowed: [...exercise.allowed], target: clone(exercise.target), refs: [...exercise.refs], progressMetric: exercise.progressMetric })
+const kindOrder: Record<TK, number> = { exercise: 0, habit: 1 }
+const allowedTypesForKind = (kind: TK): TT[] => kind === 'habit' ? ['count', 'duration'] : (Object.keys(TT_LABEL) as TT[])
+const defaultCategoryForKind = (kind: TK) => kind === 'habit' ? HABIT_CATEGORY_OPTIONS[0] : EXERCISE_CATEGORY_OPTIONS[0]
+const sanitizeExerciseKind = (kind?: TK): TK => kind === 'habit' ? 'habit' : 'exercise'
+const sanitizeExerciseDefaultType = (kind: TK, defaultType?: TT): TT => {
+  const allowed = allowedTypesForKind(kind)
+  return defaultType && allowed.includes(defaultType) ? defaultType : allowed[0]
+}
+const sanitizeAllowedTypes = (kind: TK, allowed: TT[] | undefined, defaultType: TT): TT[] => {
+  const supported = new Set(allowedTypesForKind(kind))
+  const next = (allowed ?? []).filter((type): type is TT => supported.has(type))
+  return Array.from(new Set(next.length ? [...next, defaultType] : [defaultType]))
+}
+const compareExercises = (a: Exercise, b: Exercise) => kindOrder[a.kind] - kindOrder[b.kind] || a.name.localeCompare(b.name)
+const emptyExerciseForm = (kind: TK = 'exercise'): ExerciseForm => ({ kind, name: '', category: defaultCategoryForKind(kind), equipment: '', notes: '', defaultType: 'count', allowed: ['count'], target: blank('count'), refs: ['last-result', 'personal-best'], progressMetric: 'count' })
+const formFromExercise = (exercise: Exercise): ExerciseForm => ({ kind: exercise.kind, name: exercise.name, category: exercise.category, equipment: exercise.equipment, notes: exercise.notes, defaultType: exercise.defaultType, allowed: [...exercise.allowed], target: clone(exercise.target), refs: [...exercise.refs], progressMetric: exercise.progressMetric })
 const emptyPlanForm = (): PlanForm => ({ name: '', focus: '' })
 const formFromPlan = (plan: Plan): PlanForm => ({ name: plan.name, focus: plan.focus })
 const progressMetricHint = (form: ExerciseForm) => {
+  if (form.kind === 'habit') {
+    return form.progressMetric === 'time'
+      ? 'Timed habits compare minutes logged over time.'
+      : 'Count-based habits compare completions or volume over time.'
+  }
   if (form.progressMetric === 'time') {
     if (form.defaultType === 'distance') return 'Distance is the target, and logged time is what gets tracked for progress.'
     if (form.defaultType === 'for-time') return 'Fixed reps are the target, and finish time is what gets tracked for progress.'
@@ -75,10 +97,12 @@ const progressMetricHint = (form: ExerciseForm) => {
 function seed(): State {
   const today = key(new Date())
   const ex: Exercise[] = [
-    { id: id('ex'), name: 'Push-Ups', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Can be straight reps, sets, or for time.', defaultType: 'sets', allowed: ['count', 'sets', 'for-time'], target: { sets: 5, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Wall Sit', category: 'Bodyweight', equipment: 'Wall', notes: 'Great timed hold.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 90 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
-    { id: id('ex'), name: 'Dumbbell Curl', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Track weight progression.', defaultType: 'weighted', allowed: ['weighted', 'sets'], target: { sets: 4, reps: 8, weight: 32 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Run', category: 'Bodyweight', equipment: 'Shoes', notes: 'Distance-focused by default.', defaultType: 'distance', allowed: ['distance', 'duration'], target: { distance: 3, unit: 'mi' }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'exercise', name: 'Push-Ups', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Can be straight reps, sets, or for time.', defaultType: 'sets', allowed: ['count', 'sets', 'for-time'], target: { sets: 5, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Wall Sit', category: 'Bodyweight', equipment: 'Wall', notes: 'Great timed hold.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 90 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'exercise', name: 'Dumbbell Curl', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Track weight progression.', defaultType: 'weighted', allowed: ['weighted', 'sets'], target: { sets: 4, reps: 8, weight: 32 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Run', category: 'Bodyweight', equipment: 'Shoes', notes: 'Distance-focused by default.', defaultType: 'distance', allowed: ['distance', 'duration'], target: { distance: 3, unit: 'mi' }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'habit', name: 'Bible Reading', category: 'Spiritual', equipment: '', notes: 'Daily reading can be tracked by time or completed sections.', defaultType: 'duration', allowed: ['count', 'duration'], target: { seconds: 900 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'habit', name: 'Prayer', category: 'Spiritual', equipment: '', notes: 'Simple daily prayer habit.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 600 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
   ]
   const planId = id('plan'), runId = id('run')
   return {
@@ -197,55 +221,67 @@ function ensureAmpedData(state: LegacyState): State {
   }
 
   const withMetrics: Exercise[] = cleanedState.exercises.map((exercise) => {
+    const kind = sanitizeExerciseKind(exercise.kind)
+    const defaultType = sanitizeExerciseDefaultType(kind, exercise.defaultType)
     const refs = (exercise.refs ?? []).filter((ref): ref is RM => ref === 'last-result' || ref === 'personal-best')
+    const progressMetric = exercise.progressMetric ?? (defaultType === 'distance' || defaultType === 'duration' || defaultType === 'for-time' ? 'time' : defaultType === 'weighted' ? 'weight' : exercise.name.toLowerCase().includes('dumbbell') ? 'weight' : 'count')
     return {
       ...exercise,
+      kind,
+      category: exercise.category || defaultCategoryForKind(kind),
+      defaultType,
+      allowed: sanitizeAllowedTypes(kind, exercise.allowed, defaultType),
       refs: refs.length ? refs : ['last-result', 'personal-best'],
-      progressMetric: exercise.progressMetric ?? (exercise.defaultType === 'distance' || exercise.defaultType === 'duration' || exercise.defaultType === 'for-time' ? 'time' : exercise.defaultType === 'weighted' ? 'weight' : exercise.name.toLowerCase().includes('dumbbell') ? 'weight' : 'count'),
+      progressMetric: kind === 'habit' && progressMetric === 'weight' ? (defaultType === 'duration' ? 'time' : 'count') : progressMetric,
     }
   })
   const exerciseCatalog: Exercise[] = [
-    { id: id('ex'), name: 'Push-Ups', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Straight sets, endurance blocks, and for-time work.', defaultType: 'sets', allowed: ['count', 'sets', 'for-time'], target: { sets: 5, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Bent-Over Reverse Fly', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Rear delt dumbbell movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 12 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Bird Dog', category: 'Bodyweight', equipment: 'Floor', notes: 'Core and stability movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Burpees', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Full-body conditioning movement.', defaultType: 'count', allowed: ['count', 'for-time'], target: { count: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Calf Raises', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Can be bodyweight or weighted.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Chest-Supported Row', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Back movement with chest support.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Crunches', category: 'Bodyweight', equipment: 'Floor', notes: 'Abdominal isolation movement.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 30 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Dead Bug', category: 'Bodyweight', equipment: 'Floor', notes: 'Core control movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 12 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Dumbbell Floor Press', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Horizontal pressing movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 4, reps: 8 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Dumbbell Romanian Deadlift', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Hip hinge lower-body movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 4, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Dumbbell Row', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Single-arm row work.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Plank', category: 'Bodyweight', equipment: 'Floor', notes: 'Timed hold.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 120 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
-    { id: id('ex'), name: 'Glute Bridge', category: 'Bodyweight', equipment: 'Floor', notes: 'Posterior chain bodyweight movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 15 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Run', category: 'Bodyweight', equipment: 'Shoes', notes: 'Distance or timed running.', defaultType: 'distance', allowed: ['distance', 'duration'], target: { distance: 2, unit: 'mi' }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
-    { id: id('ex'), name: 'Goblet Squat', category: 'Dumbbell', equipment: 'Dumbbell', notes: 'Lower-body strength squat variation.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 4, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Hammer Curl', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Neutral-grip dumbbell curl.', defaultType: 'weighted', allowed: ['weighted', 'sets'], target: { sets: 3, reps: 10, weight: 25 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Jumping Jacks', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Simple conditioning movement.', defaultType: 'count', allowed: ['count', 'duration'], target: { count: 50 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Lateral Raise', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Shoulder accessory movement.', defaultType: 'weighted', allowed: ['weighted', 'sets'], target: { sets: 3, reps: 12, weight: 15 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Mountain Climbers', category: 'Bodyweight', equipment: 'Floor', notes: 'Core and conditioning movement.', defaultType: 'duration', allowed: ['duration', 'count'], target: { seconds: 60 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
-    { id: id('ex'), name: 'Dumbbell Lunges', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Weighted lunges.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Pull-Ups', category: 'Bodyweight', equipment: 'Pull-up Bar', notes: 'Vertical pulling movement.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Squats', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Bodyweight squat volume or for-time work.', defaultType: 'count', allowed: ['count', 'for-time'], target: { count: 100 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Sit-Ups', category: 'Bodyweight', equipment: 'Floor', notes: 'Basic core movement.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 25 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Step-Ups', category: 'Bodyweight', equipment: 'Bench or Step', notes: 'Lower-body step movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 12 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Wall Sit', category: 'Bodyweight', equipment: 'Wall', notes: 'Timed wall sit hold.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 60 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
-    { id: id('ex'), name: 'Dumbbell Shoulder Press', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Vertical pressing movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
-    { id: id('ex'), name: 'Walking Lunges', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Traveling lunge variation.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 40 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
-    { id: id('ex'), name: 'Lunges', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Bodyweight lunges.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 40 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Push-Ups', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Straight sets, endurance blocks, and for-time work.', defaultType: 'sets', allowed: ['count', 'sets', 'for-time'], target: { sets: 5, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Bent-Over Reverse Fly', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Rear delt dumbbell movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 12 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Bird Dog', category: 'Bodyweight', equipment: 'Floor', notes: 'Core and stability movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Burpees', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Full-body conditioning movement.', defaultType: 'count', allowed: ['count', 'for-time'], target: { count: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Calf Raises', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Can be bodyweight or weighted.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Chest-Supported Row', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Back movement with chest support.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Crunches', category: 'Bodyweight', equipment: 'Floor', notes: 'Abdominal isolation movement.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 30 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Dead Bug', category: 'Bodyweight', equipment: 'Floor', notes: 'Core control movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 12 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Dumbbell Floor Press', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Horizontal pressing movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 4, reps: 8 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Dumbbell Romanian Deadlift', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Hip hinge lower-body movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 4, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Dumbbell Row', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Single-arm row work.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Plank', category: 'Bodyweight', equipment: 'Floor', notes: 'Timed hold.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 120 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'exercise', name: 'Glute Bridge', category: 'Bodyweight', equipment: 'Floor', notes: 'Posterior chain bodyweight movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 15 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Run', category: 'Bodyweight', equipment: 'Shoes', notes: 'Distance or timed running.', defaultType: 'distance', allowed: ['distance', 'duration'], target: { distance: 2, unit: 'mi' }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'exercise', name: 'Goblet Squat', category: 'Dumbbell', equipment: 'Dumbbell', notes: 'Lower-body strength squat variation.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 4, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Hammer Curl', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Neutral-grip dumbbell curl.', defaultType: 'weighted', allowed: ['weighted', 'sets'], target: { sets: 3, reps: 10, weight: 25 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Jumping Jacks', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Simple conditioning movement.', defaultType: 'count', allowed: ['count', 'duration'], target: { count: 50 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Lateral Raise', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Shoulder accessory movement.', defaultType: 'weighted', allowed: ['weighted', 'sets'], target: { sets: 3, reps: 12, weight: 15 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Mountain Climbers', category: 'Bodyweight', equipment: 'Floor', notes: 'Core and conditioning movement.', defaultType: 'duration', allowed: ['duration', 'count'], target: { seconds: 60 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'exercise', name: 'Dumbbell Lunges', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Weighted lunges.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 20 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Pull-Ups', category: 'Bodyweight', equipment: 'Pull-up Bar', notes: 'Vertical pulling movement.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Squats', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Bodyweight squat volume or for-time work.', defaultType: 'count', allowed: ['count', 'for-time'], target: { count: 100 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Sit-Ups', category: 'Bodyweight', equipment: 'Floor', notes: 'Basic core movement.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 25 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Step-Ups', category: 'Bodyweight', equipment: 'Bench or Step', notes: 'Lower-body step movement.', defaultType: 'sets', allowed: ['sets', 'count'], target: { sets: 3, reps: 12 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Wall Sit', category: 'Bodyweight', equipment: 'Wall', notes: 'Timed wall sit hold.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 60 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'exercise', name: 'Dumbbell Shoulder Press', category: 'Dumbbell', equipment: 'Dumbbells', notes: 'Vertical pressing movement.', defaultType: 'sets', allowed: ['sets', 'weighted'], target: { sets: 3, reps: 10 }, refs: ['last-result', 'personal-best'], progressMetric: 'weight' },
+    { id: id('ex'), kind: 'exercise', name: 'Walking Lunges', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Traveling lunge variation.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 40 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'exercise', name: 'Lunges', category: 'Bodyweight', equipment: 'Bodyweight', notes: 'Bodyweight lunges.', defaultType: 'count', allowed: ['count', 'sets'], target: { count: 40 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'habit', name: 'Bible Reading', category: 'Spiritual', equipment: '', notes: 'Track Bible reading by time or completed sections.', defaultType: 'duration', allowed: ['count', 'duration'], target: { seconds: 900 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'habit', name: 'Prayer', category: 'Spiritual', equipment: '', notes: 'A simple daily prayer habit.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 600 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
+    { id: id('ex'), kind: 'habit', name: 'Journal', category: 'Mind', equipment: '', notes: 'Track journaling by entries or minutes.', defaultType: 'count', allowed: ['count', 'duration'], target: { count: 1 }, refs: ['last-result', 'personal-best'], progressMetric: 'count' },
+    { id: id('ex'), kind: 'habit', name: 'Tidy Up', category: 'Home', equipment: '', notes: 'A quick cleanup block for the day.', defaultType: 'duration', allowed: ['duration'], target: { seconds: 900 }, refs: ['last-result', 'personal-best'], progressMetric: 'time' },
   ]
 
-  const existingByName = new Map(withMetrics.map((exercise) => [exercise.name, exercise]))
+  const existingByName = new Map(withMetrics.map((exercise) => [`${exercise.kind}:${exercise.name}`, exercise]))
   const exercises = [...withMetrics]
 
   for (const exercise of exerciseCatalog) {
-    if (!existingByName.has(exercise.name)) {
+    const exerciseKey = `${exercise.kind}:${exercise.name}`
+    if (!existingByName.has(exerciseKey)) {
       exercises.push(exercise)
-      existingByName.set(exercise.name, exercise)
+      existingByName.set(exerciseKey, exercise)
     }
   }
 
-  const getExerciseId = (name: string) => existingByName.get(name)?.id ?? ''
+  const getExerciseId = (name: string) => existingByName.get(`exercise:${name}`)?.id ?? ''
 
   const ampedDays: PlanDay[] = [
     { id: id('pd'), label: 'Day 1', rest: false, notes: 'Upper strength: 50 pushups, dumbbell floor press 4x8, dumbbell row 4x10 each side, dumbbell shoulder press 3x10, plank 3x45 sec', items: [planItem(getExerciseId('Push-Ups'), 'count', { count: 50 }), planItem(getExerciseId('Dumbbell Floor Press'), 'sets', { sets: 4, reps: 8 }), planItem(getExerciseId('Dumbbell Row'), 'sets', { sets: 4, reps: 10 }), planItem(getExerciseId('Dumbbell Shoulder Press'), 'sets', { sets: 3, reps: 10 }), planItem(getExerciseId('Plank'), 'duration', { seconds: 135 })] },
@@ -486,6 +522,7 @@ function normalizePlanDaysData(days: PlanDay[]) {
 
 function mapExerciseRow(row: {
   id: string
+  kind?: string | null
   name: string
   category: string
   equipment: string
@@ -498,6 +535,7 @@ function mapExerciseRow(row: {
 }): Exercise {
   return {
     id: row.id,
+    kind: sanitizeExerciseKind(row.kind as TK | undefined),
     name: row.name,
     category: row.category,
     equipment: row.equipment,
@@ -663,6 +701,7 @@ export default function App() {
   const [shift, setShift] = useState(1)
   const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
   const [exerciseForm, setExerciseForm] = useState<ExerciseForm>(() => state.exercises[0] ? formFromExercise(state.exercises[0]) : emptyExerciseForm())
+  const [libraryFilter, setLibraryFilter] = useState<TK>('exercise')
   const [selectedProgressExerciseId, setSelectedProgressExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
   const [editingLogId, setEditingLogId] = useState<string | null>(null)
   const [progressEdit, setProgressEdit] = useState<Result>({})
@@ -757,7 +796,8 @@ export default function App() {
     }
   }, [])
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
-  const sortedExercises = useMemo(() => [...state.exercises].sort((a, b) => a.name.localeCompare(b.name)), [state.exercises])
+  const sortedExercises = useMemo(() => [...state.exercises].sort(compareExercises), [state.exercises])
+  const filteredLibraryExercises = useMemo(() => sortedExercises.filter((exercise) => exercise.kind === libraryFilter), [libraryFilter, sortedExercises])
   const starterExercises = useMemo(() => catalogExercisesFromSlices(state.plans, state.runs, state.schedule, state.logs), [state.plans, state.runs, state.schedule, state.logs])
   const starterPlans = useMemo(() => catalogPlansFromSlices(state.exercises, state.runs, state.schedule, state.logs), [state.exercises, state.runs, state.schedule, state.logs])
   const dayByDate = useMemo(() => Object.fromEntries(state.schedule.map((x) => [x.date, x])), [state.schedule])
@@ -769,6 +809,14 @@ export default function App() {
   useEffect(() => {
     setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
   }, [progressExercises])
+  useEffect(() => {
+    const selectedExercise = selectedExerciseId ? exById[selectedExerciseId] : null
+    if (selectedExercise && selectedExercise.kind === libraryFilter) return
+    const nextExercise = filteredLibraryExercises[0] ?? null
+    if (!nextExercise && selectedExerciseId === null && exerciseForm.kind === libraryFilter) return
+    setSelectedExerciseId(nextExercise?.id ?? null)
+    setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm(libraryFilter))
+  }, [exById, exerciseForm.kind, filteredLibraryExercises, libraryFilter, selectedExerciseId])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
@@ -790,6 +838,7 @@ export default function App() {
     const exerciseRows = nextExercises.map((exercise) => ({
       id: exercise.id,
       user_id: user.id,
+      kind: exercise.kind,
       name: exercise.name,
       category: exercise.category,
       equipment: exercise.equipment,
@@ -831,6 +880,7 @@ export default function App() {
       .map((exercise) => ({
         id: exercise.id,
         user_id: user.id,
+        kind: exercise.kind,
         name: exercise.name,
         category: exercise.category,
         equipment: exercise.equipment,
@@ -1170,7 +1220,7 @@ export default function App() {
     const syncExercises = async () => {
       const { data, error } = await client
         .from('exercises')
-        .select('id, name, category, equipment, notes, default_type, allowed, target, refs, progress_metric')
+        .select('id, kind, name, category, equipment, notes, default_type, allowed, target, refs, progress_metric')
         .eq('user_id', user.id)
         .order('name', { ascending: true })
 
@@ -1180,6 +1230,7 @@ export default function App() {
         const payload = starterExercises.map((exercise) => ({
           id: exercise.id,
           user_id: user.id,
+          kind: exercise.kind,
           name: exercise.name,
           category: exercise.category,
           equipment: exercise.equipment,
@@ -1684,7 +1735,7 @@ export default function App() {
       const client = supabase
       const { error } = await client.from('exercises').delete().eq('id', exerciseId).eq('user_id', user.id)
       if (error) {
-        pushToast('Could not delete exercise.')
+        pushToast('Could not delete item.')
         return
       }
     }
@@ -1795,17 +1846,23 @@ export default function App() {
 
   const saveExercise = async () => {
     if (!exerciseForm.name.trim()) return
+    const nextKind = sanitizeExerciseKind(exerciseForm.kind)
+    const nextDefaultType = sanitizeExerciseDefaultType(nextKind, exerciseForm.defaultType)
+    const nextProgressMetric = nextKind === 'habit' && exerciseForm.progressMetric === 'weight'
+      ? (nextDefaultType === 'duration' ? 'time' : 'count')
+      : exerciseForm.progressMetric
     const nextExercise: Exercise = {
       id: selectedExerciseId ?? id('ex'),
+      kind: nextKind,
       name: exerciseForm.name.trim(),
-      category: exerciseForm.category || CATEGORY_OPTIONS[0],
-      equipment: exerciseForm.equipment || 'Open',
+      category: exerciseForm.category || defaultCategoryForKind(nextKind),
+      equipment: nextKind === 'habit' ? '' : (exerciseForm.equipment || 'Open'),
       notes: exerciseForm.notes,
-      defaultType: exerciseForm.defaultType,
-      allowed: exerciseForm.allowed,
-      target: clone(exerciseForm.target),
+      defaultType: nextDefaultType,
+      allowed: sanitizeAllowedTypes(nextKind, exerciseForm.allowed, nextDefaultType),
+      target: clone(nextDefaultType === exerciseForm.defaultType ? exerciseForm.target : blank(nextDefaultType)),
       refs: exerciseForm.refs,
-      progressMetric: exerciseForm.progressMetric,
+      progressMetric: nextProgressMetric,
     }
 
     if (supabase && user) {
@@ -1813,6 +1870,7 @@ export default function App() {
       const { error } = await client.from('exercises').upsert({
         id: nextExercise.id,
         user_id: user.id,
+        kind: nextExercise.kind,
         name: nextExercise.name,
         category: nextExercise.category,
         equipment: nextExercise.equipment,
@@ -1824,7 +1882,7 @@ export default function App() {
         progress_metric: nextExercise.progressMetric,
       })
       if (error) {
-        pushToast('Could not save exercise.')
+        pushToast('Could not save item.')
         return
       }
     }
@@ -1842,7 +1900,7 @@ export default function App() {
 
   const startNewExercise = () => {
     setSelectedExerciseId(null)
-    setExerciseForm(emptyExerciseForm())
+    setExerciseForm(emptyExerciseForm(libraryFilter))
     focusExerciseEditor()
   }
 
@@ -1863,7 +1921,7 @@ export default function App() {
         </div>
 
         <nav className="topNav" aria-label="Primary navigation">
-          {(['schedule', 'exercises', 'plans', 'progress'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{x[0].toUpperCase() + x.slice(1)}</button>)}
+          {(['schedule', 'exercises', 'plans', 'progress'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{{ schedule: 'Schedule', exercises: 'Library', plans: 'Plans', progress: 'Progress' }[x]}</button>)}
         </nav>
 
         <div className="profileDock">
@@ -1883,7 +1941,7 @@ export default function App() {
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
           <label className="field addExerciseField">
             <select
-              aria-label="Select exercise to add"
+              aria-label="Select exercise or habit to add"
               defaultValue=""
               onChange={(event) => {
                 if (!event.target.value) return
@@ -1891,12 +1949,12 @@ export default function App() {
                 event.target.value = ''
               }}
             >
-              <option value="">Select exercise to add...</option>
-              {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}</option>)}
+              <option value="">Select exercise or habit to add...</option>
+              {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.kind === 'habit' ? ' (Habit)' : ''}</option>)}
             </select>
           </label>
           {!day.rest && <>
-            <div className="stack">{day.items.length === 0 && <div className="empty">No exercises yet.</div>}{day.items.map((item) => {
+            <div className="stack">{day.items.length === 0 && <div className="empty">No items yet.</div>}{day.items.map((item) => {
               const ex = exById[item.exerciseId]; if (!ex) return null
               const expanded = expandedItems[item.id] ?? false
               const draft = itemDrafts[item.id] ?? makeItemDraft(item, ex)
@@ -1904,7 +1962,7 @@ export default function App() {
               const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target: referenceTarget(derivedHistory, ex, r, draft.type, draft.target) } }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, draft.type)}</button>)
               return <article key={item.id} className="card">
                 <div className="row top">
-                  <button className={item.done ? 'ring done' : 'ring'} onClick={() => toggleDone(selected, item)} aria-label={`Mark ${ex.name} complete`}><span /></button>
+                  <button className={['ring', ex.kind === 'habit' ? 'habitRing' : '', item.done ? 'done' : ''].filter(Boolean).join(' ')} onClick={() => toggleDone(selected, item)} aria-label={`Mark ${ex.name} complete`}><span /></button>
                   <button className="exerciseToggle" onClick={() => {
                     if (!expanded) {
                       setItemDrafts((current) => current[item.id] ? current : { ...current, [item.id]: makeItemDraft(item, ex) })
@@ -1914,6 +1972,7 @@ export default function App() {
                     <div className="grow itemSummaryBlock">
                       <div className="itemTitleRow">
                         <h3>{ex.name}</h3>
+                        {ex.kind === 'habit' && <span className="kindBadge">Habit</span>}
                         <span className="itemTargetBadge">{compact(item.type, item.target)}</span>
                       </div>
                     </div>
@@ -1938,7 +1997,7 @@ export default function App() {
                       return { ...current, [item.id]: { ...activeDraft, timeText: parsed !== undefined ? fmtSecs(parsed) : activeDraft.timeText } }
                     })} /></label>}
                     {progressMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="text" inputMode="decimal" placeholder="0" value={draft.weightText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), weightText: e.target.value } }))} /></label>}
-                    {progressMetric === 'count' && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual reps</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
+                    {progressMetric === 'count' && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual count</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
                     <div className="targetActions">{metricActions}</div>
                   </div>
                   <label className="field"><span>Completion note</span><input value={draft.note} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), note: e.target.value } }))} placeholder="Optional note for this day" /></label>
@@ -1962,14 +2021,14 @@ export default function App() {
               <button className="primary" onClick={() => focusDay(today, true)}>Open</button>
             </div>
             <div className="todayList">
-              {todayItems.length === 0 && <p className="mutedCopy">No exercises scheduled for today.</p>}
+              {todayItems.length === 0 && <p className="mutedCopy">No exercises or habits scheduled for today.</p>}
               {todayItems.map((item) => {
                 const ex = exById[item.exerciseId]
                 if (!ex) return null
                 return <div key={item.id} className={item.done ? 'todayEntry doneEntry todayRow' : 'todayEntry todayRow'}>
-                  <button className={item.done ? 'ring done' : 'ring'} onClick={() => toggleDone(today, item)} aria-label={`Mark ${ex.name} complete from today`}><span /></button>
+                  <button className={['ring', ex.kind === 'habit' ? 'habitRing' : '', item.done ? 'done' : ''].filter(Boolean).join(' ')} onClick={() => toggleDone(today, item)} aria-label={`Mark ${ex.name} complete from today`}><span /></button>
                   <button className="todayOpenButton" onClick={() => focusDay(today, true)}>
-                    <span>{item.done ? `Completed - ${ex.name}` : ex.name}</span>
+                    <span>{item.done ? `Completed - ${ex.name}` : ex.name}{ex.kind === 'habit' ? ' (Habit)' : ''}</span>
                     <strong>{compact(item.type, item.target)}</strong>
                   </button>
                 </div>
@@ -2039,22 +2098,39 @@ export default function App() {
       {tab === 'exercises' && <main className="grid">
         <section className="panel stack">
           <div className="row">
-            <div><p className="eyebrow">Exercises</p><h2>Select an exercise to manage it</h2></div>
-            <button className="pill" onClick={startNewExercise}>New exercise</button>
+            <div><p className="eyebrow">Library</p><h2>Manage exercises and habits</h2></div>
+            <button className="pill" onClick={startNewExercise}>New {libraryFilter}</button>
+          </div>
+          <div className="nav">
+            {(['exercise', 'habit'] as const).map((kind) => <button key={kind} className={libraryFilter === kind ? 'pill active' : 'pill'} onClick={() => setLibraryFilter(kind)}>{TRACKABLE_KIND_LABEL[kind]}s</button>)}
           </div>
           <div className="stack">
-            {sortedExercises.map((ex) => <button key={ex.id} className={selectedExerciseId === ex.id ? 'listItem activeItem' : 'listItem'} onClick={() => selectExercise(ex.id)}><strong>{ex.name}</strong></button>)}
+            {filteredLibraryExercises.map((ex) => <button key={ex.id} className={selectedExerciseId === ex.id ? 'listItem activeItem' : 'listItem'} onClick={() => selectExercise(ex.id)}><span className="listItemContent"><strong>{ex.name}</strong><span className="listMeta">{ex.category}{ex.kind === 'habit' ? <span className="kindBadge subtleBadge">Habit</span> : null}</span></span></button>)}
           </div>
         </section>
         <section ref={exerciseDetailRef} className="panel stack">
-          <div><p className="eyebrow">Manage exercise</p><h2>{selectedExerciseId ? 'Update exercise' : 'Create exercise'}</h2></div>
+          <div><p className="eyebrow">Manage {exerciseForm.kind}</p><h2>{selectedExerciseId ? `Update ${exerciseForm.kind}` : `Create ${exerciseForm.kind}`}</h2></div>
+          <div><span className="fieldLabel">Type</span><div className="chips">{(['exercise', 'habit'] as const).map((kind) => { const on = exerciseForm.kind === kind; return <button key={kind} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((current) => {
+            const nextKind = kind
+            const nextDefaultType = sanitizeExerciseDefaultType(nextKind, current.defaultType)
+            return {
+              ...current,
+              kind: nextKind,
+              category: current.kind === nextKind ? current.category : defaultCategoryForKind(nextKind),
+              equipment: nextKind === 'habit' ? '' : current.equipment,
+              defaultType: nextDefaultType,
+              allowed: sanitizeAllowedTypes(nextKind, current.allowed, nextDefaultType),
+              target: allowedTypesForKind(nextKind).includes(current.defaultType) ? current.target : blank(nextDefaultType),
+              progressMetric: nextKind === 'habit' && current.progressMetric === 'weight' ? (nextDefaultType === 'duration' ? 'time' : 'count') : current.progressMetric,
+            }
+          })}>{TRACKABLE_KIND_LABEL[kind]}</button> })}</div></div>
           <label className="field"><span>Name</span><input value={exerciseForm.name} onChange={(e) => setExerciseForm((x) => ({ ...x, name: e.target.value }))} /></label>
           <div className="split">
-            <label className="field"><span>Category</span><select value={exerciseForm.category} onChange={(e) => setExerciseForm((x) => ({ ...x, category: e.target.value }))}>{Array.from(new Set([...CATEGORY_OPTIONS, ...state.exercises.map((ex) => ex.category), exerciseForm.category])).filter(Boolean).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-            <label className="field"><span>Equipment</span><input value={exerciseForm.equipment} onChange={(e) => setExerciseForm((x) => ({ ...x, equipment: e.target.value }))} /></label>
+            <label className="field"><span>Category</span><select value={exerciseForm.category} onChange={(e) => setExerciseForm((x) => ({ ...x, category: e.target.value }))}>{Array.from(new Set([...(exerciseForm.kind === 'habit' ? HABIT_CATEGORY_OPTIONS : EXERCISE_CATEGORY_OPTIONS), ...state.exercises.filter((ex) => ex.kind === exerciseForm.kind).map((ex) => ex.category), exerciseForm.category])).filter(Boolean).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+            {exerciseForm.kind === 'exercise' && <label className="field"><span>Equipment</span><input value={exerciseForm.equipment} onChange={(e) => setExerciseForm((x) => ({ ...x, equipment: e.target.value }))} /></label>}
           </div>
           <label className="field"><span>Notes</span><textarea rows={3} value={exerciseForm.notes} onChange={(e) => setExerciseForm((x) => ({ ...x, notes: e.target.value }))} /></label>
-          <label className="field"><span>Default target type</span><select value={exerciseForm.defaultType} onChange={(e) => setExerciseForm((x) => ({ ...x, defaultType: e.target.value as TT, allowed: Array.from(new Set([...x.allowed, e.target.value as TT])), target: blank(e.target.value as TT) }))}>{(Object.keys(TT_LABEL) as TT[]).map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
+          <label className="field"><span>Default target type</span><select value={exerciseForm.defaultType} onChange={(e) => setExerciseForm((x) => ({ ...x, defaultType: e.target.value as TT, allowed: Array.from(new Set([...x.allowed, e.target.value as TT])), target: blank(e.target.value as TT) }))}>{allowedTypesForKind(exerciseForm.kind).map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
           <label className="field"><span>Progress tracked by</span><select value={exerciseForm.progressMetric} onChange={(e) => setExerciseForm((x) => {
             const nextMetric = e.target.value as PM
             if (nextMetric === 'time' && !['duration', 'distance', 'for-time'].includes(x.defaultType)) {
@@ -2067,14 +2143,14 @@ export default function App() {
               }
             }
             return { ...x, progressMetric: nextMetric }
-          })}>{(Object.keys(PM_LABEL) as PM[]).map((metricOption) => <option key={metricOption} value={metricOption}>{PM_LABEL[metricOption]}</option>)}</select></label>
+          })}>{(exerciseForm.kind === 'habit' ? (['count', 'time'] as PM[]) : (Object.keys(PM_LABEL) as PM[])).map((metricOption) => <option key={metricOption} value={metricOption}>{PM_LABEL[metricOption]}</option>)}</select></label>
           <p className="mutedCopy">{progressMetricHint(exerciseForm)}</p>
           <TargetEditor type={exerciseForm.defaultType} target={exerciseForm.target} onChange={(target) => setExerciseForm((x) => ({ ...x, target }))} />
-          <div><span className="fieldLabel">Allowed target types</span><div className="chips">{(Object.keys(TT_LABEL) as TT[]).map((t) => { const on = exerciseForm.allowed.includes(t); return <button key={t} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, allowed: on ? (x.allowed.filter((y) => y !== t).length ? x.allowed.filter((y) => y !== t) : [x.defaultType]) : [...x.allowed, t] }))}>{TT_LABEL[t]}</button> })}</div></div>
+          <div><span className="fieldLabel">Allowed target types</span><div className="chips">{allowedTypesForKind(exerciseForm.kind).map((t) => { const on = exerciseForm.allowed.includes(t); return <button key={t} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, allowed: on ? (x.allowed.filter((y) => y !== t).length ? x.allowed.filter((y) => y !== t) : [x.defaultType]) : [...x.allowed, t] }))}>{TT_LABEL[t]}</button> })}</div></div>
           <div><span className="fieldLabel">Reference choices</span><div className="chips">{(Object.keys(RM_LABEL) as RM[]).map((r) => { const on = exerciseForm.refs.includes(r); return <button key={r} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, refs: on ? x.refs.filter((y) => y !== r) : [...x.refs, r] }))}>{RM_LABEL[r]}</button> })}</div></div>
           <div className="nav">
-            <button className="primary" onClick={saveExercise}>{selectedExerciseId ? 'Save changes' : 'Create exercise'}</button>
-            {selectedExerciseId && <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: 'Delete exercise?', body: 'This will remove the exercise from the library, plans, scheduled days, and progress history.' })}>Delete exercise</button>}
+            <button className="primary" onClick={saveExercise}>{selectedExerciseId ? 'Save changes' : `Create ${exerciseForm.kind}`}</button>
+            {selectedExerciseId && <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: `Delete ${exerciseForm.kind}?`, body: 'This will remove the item from the library, plans, scheduled days, and progress history.' })}>Delete {exerciseForm.kind}</button>}
           </div>
         </section>
       </main>}
@@ -2154,7 +2230,7 @@ export default function App() {
                 </div>
                 {expandedPlanDays[pd.id] && <>
                   <label className="field">
-                    <span>Add exercise</span>
+                    <span>Add item</span>
                     <select
                       defaultValue=""
                       onChange={(event) => {
@@ -2163,8 +2239,8 @@ export default function App() {
                         event.target.value = ''
                       }}
                     >
-                      <option value="">Select exercise</option>
-                      {sortedExercises.map((ex) => <option key={ex.id} value={ex.id}>{ex.name}</option>)}
+                      <option value="">Select exercise or habit</option>
+                      {sortedExercises.map((ex) => <option key={ex.id} value={ex.id}>{ex.name}{ex.kind === 'habit' ? ' (Habit)' : ''}</option>)}
                     </select>
                   </label>
                 <div className="stack compactStack">{pd.items.length === 0 && <p className="mutedCopy">Rest day</p>}{pd.items.map((it) => {
@@ -2202,18 +2278,18 @@ export default function App() {
 
       {tab === 'progress' && <main className="grid">
         <section className="panel stack">
-          <div><p className="eyebrow">Progress</p><h2>Select an exercise</h2></div>
+          <div><p className="eyebrow">Progress</p><h2>Select an item</h2></div>
           <div className="stack">
-            {progressExercises.length === 0 && <div className="empty">Complete an exercise to start tracking progress here.</div>}
+            {progressExercises.length === 0 && <div className="empty">Complete an exercise or habit to start tracking progress here.</div>}
             {progressExercises.map((exercise) => <button key={exercise.id} className={selectedProgressExerciseId === exercise.id ? 'listItem activeItem' : 'listItem'} onClick={() => { setSelectedProgressExerciseId(exercise.id); cancelLogEdit() }}><strong>{exercise.name}</strong></button>)}
           </div>
         </section>
         <section className="panel stack">
           {progressExercise ? <>
           <div>
-            <p className="eyebrow">Exercise progress</p>
+            <p className="eyebrow">{TRACKABLE_KIND_LABEL[progressExercise.kind]} progress</p>
             <h2>{progressExercise.name}</h2>
-            <p>{progressExercise.category} / {progressExercise.equipment}</p>
+            <p>{progressExercise.category}{progressExercise.equipment ? ` / ${progressExercise.equipment}` : ''}</p>
           </div>
           <div className="progressSummaryGrid">
             <div className="mini">
@@ -2231,7 +2307,7 @@ export default function App() {
           </div>
           <div className="stack">
             <div><p className="eyebrow">Trend</p></div>
-            {progressHistory.length === 0 && <div className="empty">No completed history yet for this exercise.</div>}
+            {progressHistory.length === 0 && <div className="empty">No completed history yet for this item.</div>}
             {progressHistory.length > 0 && <div className="trendChart">
               {progressHistory.map((entry) => {
                 const currentMetric = metric(progressExercise.progressMetric, entry)
@@ -2249,7 +2325,7 @@ export default function App() {
           </div>
           <div className="stack">
             <div><p className="eyebrow">History</p></div>
-            {progressHistory.length === 0 && <div className="empty">Complete this exercise to start a history.</div>}
+            {progressHistory.length === 0 && <div className="empty">Complete this item to start a history.</div>}
             {progressHistory.slice().reverse().map((entry) => {
               const isEditing = editingLogId === entry.id
               const canOpenDay = !!entry.sourceItemId
@@ -2278,7 +2354,7 @@ export default function App() {
               </div>
             })}
           </div>
-          </> : <div className="empty">No completed exercise history yet.</div>}
+          </> : <div className="empty">No completed item history yet.</div>}
         </section>
       </main>}
 

@@ -21,6 +21,7 @@ create table if not exists public.profiles (
 create table if not exists public.exercises (
   id text primary key,
   user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null default 'exercise',
   name text not null,
   category text not null,
   equipment text not null,
@@ -33,6 +34,23 @@ create table if not exists public.exercises (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.exercises
+  add column if not exists kind text not null default 'exercise';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'exercises_kind_check'
+      and conrelid = 'public.exercises'::regclass
+  ) then
+    alter table public.exercises
+      add constraint exercises_kind_check check (kind in ('exercise', 'habit'));
+  end if;
+end;
+$$;
 
 create table if not exists public.plans (
   id text primary key,
