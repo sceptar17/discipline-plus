@@ -550,6 +550,12 @@
   font-weight: 700;
 }
 
+.destructiveIconButton svg,
+.compactActionPill svg {
+  width: 16px;
+  height: 16px;
+}
+
 .todayOpenButton {
   flex: 1;
   border: 0;

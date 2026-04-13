@@ -1752,13 +1752,25 @@ export default function App() {
     setSelectedProgressExerciseId((current) => current === exerciseId ? nextExercise?.id ?? null : current)
     setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm())
   }
-  const deleteRun = async (runId: string) => {
-    const nextSchedule = state.schedule.filter((day0) => day0.runId !== runId)
-    const nextRuns = state.runs.filter((run) => run.id !== runId)
-    const nextLogs = state.logs.filter((entry) => {
-      if (!entry.sourceItemId) return true
-      return !state.schedule.some((day0) => day0.runId === runId && day0.items.some((item) => item.id === entry.sourceItemId))
+  const deleteRun = async (runId: string, options?: { keepCompletedDays?: boolean }) => {
+    const keepCompletedDays = options?.keepCompletedDays ?? false
+    const removedItemIds = new Set<string>()
+    const keptDays: Day[] = []
+
+    state.schedule.forEach((day0) => {
+      if (day0.runId !== runId) return
+      const isCompleted = day0.items.length > 0 && day0.items.every((item) => item.done)
+      if (keepCompletedDays && isCompleted) {
+        keptDays.push(normalizeScheduleDay({ ...day0, runId: undefined, dayNo: undefined, skipped: false }))
+        return
+      }
+      day0.items.forEach((item) => removedItemIds.add(item.id))
     })
+
+    const nextSchedule = [...state.schedule.filter((day0) => day0.runId !== runId), ...keptDays]
+      .sort((a, b) => a.date.localeCompare(b.date))
+    const nextRuns = state.runs.filter((run) => run.id !== runId)
+    const nextLogs = state.logs.filter((entry) => !entry.sourceItemId || !removedItemIds.has(entry.sourceItemId))
     await commitScheduleState(nextSchedule, nextRuns, nextLogs)
   }
   const resetAllData = async () => {
@@ -1784,7 +1796,7 @@ export default function App() {
   }
   const confirmAction = async () => {
     if (!confirmState) return
-    if (confirmState.kind === 'delete-run') await deleteRun(confirmState.runId)
+    if (confirmState.kind === 'delete-run') await deleteRun(confirmState.runId, { keepCompletedDays: keepCompletedPlanDays })
     if (confirmState.kind === 'delete-plan') await deletePlan(confirmState.planId, { keepCompletedDays: keepCompletedPlanDays })
     if (confirmState.kind === 'delete-exercise') await deleteExercise(confirmState.exerciseId)
     if (confirmState.kind === 'import-data') await importData()
@@ -1797,7 +1809,7 @@ export default function App() {
     if (confirmState?.kind === 'import-data') {
       setPendingImport(null)
     }
-    if (confirmState?.kind === 'delete-plan') {
+    if (confirmState?.kind === 'delete-plan' || confirmState?.kind === 'delete-run') {
       setKeepCompletedPlanDays(true)
     }
     setConfirmState(null)
@@ -1982,7 +1994,7 @@ export default function App() {
                     </div>
                     {expanded && <span>Hide</span>}
                   </button>
-                  <button className="iconPill compactActionPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}>X</button>
+                  <button className="iconPill compactActionPill dangerPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}><TrashIcon /></button>
                 </div>
                 {expanded && <>
                   <div className="detailCompactRow">
@@ -2087,7 +2099,7 @@ export default function App() {
         <div className="confirmCard">
           <h3>{confirmState.title}</h3>
           <p>{confirmState.body}</p>
-          {confirmState.kind === 'delete-plan' && <label className="inline confirmOption">
+          {(confirmState.kind === 'delete-plan' || confirmState.kind === 'delete-run') && <label className="inline confirmOption">
             <input type="checkbox" checked={keepCompletedPlanDays} onChange={(e) => setKeepCompletedPlanDays(e.target.checked)} />
             <span>Keep already completed scheduled days as standalone history</span>
           </label>}
@@ -2157,7 +2169,7 @@ export default function App() {
           <div><span className="fieldLabel">Reference choices</span><div className="chips">{(Object.keys(RM_LABEL) as RM[]).map((r) => { const on = exerciseForm.refs.includes(r); return <button key={r} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, refs: on ? x.refs.filter((y) => y !== r) : [...x.refs, r] }))}>{RM_LABEL[r]}</button> })}</div></div>
           <div className="nav">
             <button className="primary" onClick={saveExercise}>{selectedExerciseId ? 'Save changes' : `Create ${exerciseForm.kind}`}</button>
-            {selectedExerciseId && <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: `Delete ${exerciseForm.kind}?`, body: 'This will remove the item from the library, plans, scheduled days, and progress history.' })}>Delete {exerciseForm.kind}</button>}
+            {selectedExerciseId && <button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: `Delete ${exerciseForm.kind}?`, body: 'This will remove the item from the library, plans, scheduled days, and progress history.' })} aria-label={`Delete ${exerciseForm.kind}`}><TrashIcon /></button>}
           </div>
         </section>
       </main>}
@@ -2191,7 +2203,7 @@ export default function App() {
               return <article key={r.id} className="card stack">
                 <div className="row">
                   <div><h3>{r.name} | {runStartLabel(r.startDate, today)}</h3><p>{completedDays} of {runDays.length} days complete</p></div>
-                  <div className="dayRowActions"><button className="iconPill iconTextPill dangerPill" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and all of its scheduled days from the calendar.' })} aria-label={`Delete run ${r.name}`}>Remove</button></div>
+                  <div className="dayRowActions"><button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })} aria-label={`Remove active run ${r.name}`}><TrashIcon /></button></div>
                 </div>
                 <div className="progressTrack" aria-label={`${progress}% complete`}>
                   <div className="progressFill" style={{ width: `${progress}%` }} />
@@ -2206,11 +2218,11 @@ export default function App() {
             <label className="field"><span>Focus</span><textarea rows={2} value={planForm.focus} onChange={(e) => setPlanForm((x) => ({ ...x, focus: e.target.value }))} /></label>
             <div className="nav">
               <button className="primary" onClick={savePlanMeta}>Save plan</button>
-              <button className="pill dangerPill" onClick={() => {
+              <button className="iconPill dangerPill destructiveIconButton" onClick={() => {
                 if (!selectedPlanId) return
                 setKeepCompletedPlanDays(true)
                 setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'Remove this plan template and its scheduled run days. You can keep completed days as standalone history or remove everything tied to the plan.' })
-              }}>Delete plan</button>
+              }} aria-label="Delete plan"><TrashIcon /></button>
             </div>
             {plan.days.length === 0 && <button className="addDayButton" onClick={() => addPlanDayAt(0)}>+ Add day</button>}
             {plan.days.map((pd, index) => <div key={pd.id} className="planDayStack">
@@ -2232,7 +2244,7 @@ export default function App() {
                   <div className="dayRowActions">
                     <button className="iconPill" onClick={() => addPlanDayAt(index + 1)} aria-label={`Add day after ${pd.label}`}>+</button>
                     <button className="iconPill iconTextPill softActionPill" onClick={() => duplicatePlanDay(pd.id)} aria-label={`Duplicate ${pd.label}`}>Copy</button>
-                    <button className="iconPill iconTextPill dangerPill" onClick={() => deletePlanDay(pd.id)} aria-label={`Delete ${pd.label}`}>Delete</button>
+                    <button className="iconPill dangerPill destructiveIconButton" onClick={() => deletePlanDay(pd.id)} aria-label={`Delete ${pd.label}`}><TrashIcon /></button>
                   </div>
                 </div>
                 {expandedPlanDays[pd.id] && <>
@@ -2260,7 +2272,7 @@ export default function App() {
                       <button className="exerciseToggle" onClick={() => setExpandedPlanItems((current) => ({ ...current, [it.id]: !expanded }))}>
                         <div className="grow"><strong>{ex.name}</strong><p>{ex.name} | {sum(it.type, it.target)}</p></div>
                       </button>
-                      <button className="pill dangerPill" onClick={() => removePlanItem(pd.id, it.id)}>Remove</button>
+                      <button className="iconPill dangerPill destructiveIconButton" onClick={() => removePlanItem(pd.id, it.id)} aria-label={`Remove ${ex.name} from ${pd.label}`}><TrashIcon /></button>
                     </div>
                     {expanded && <>
                       <label className="field"><span>Target type</span><select value={it.type} onChange={(e) => updatePlanItem(pd.id, it.id, (x) => ({ ...x, type: e.target.value as TT, target: blank(e.target.value as TT) }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
@@ -2469,4 +2481,15 @@ function TargetEditor({ type, target, onChange, actions, layout = 'default' }: {
   }
   if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={target.sets ?? 0} onChange={(e) => onChange({ ...target, sets: Number(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={target.reps ?? 0} onChange={(e) => onChange({ ...target, reps: Number(e.target.value) })} /></label><label className="field microField compactControl"><span>Weight</span><input type="number" min={0} value={target.weight ?? 0} onChange={(e) => onChange({ ...target, weight: Number(e.target.value) })} /></label>{actions}</div>
   return <div className="targetInline"><div className="split threeUp"><label className="field"><span>Sets</span><input type="number" min={1} value={target.sets ?? 0} onChange={(e) => onChange({ ...target, sets: Number(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={target.reps ?? 0} onChange={(e) => onChange({ ...target, reps: Number(e.target.value) })} /></label><label className="field"><span>Weight</span><input type="number" min={0} value={target.weight ?? 0} onChange={(e) => onChange({ ...target, weight: Number(e.target.value) })} /></label></div>{actions}</div>
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M9.5 4h5l1 2h-7l1-2Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M7.5 7l.7 11a2 2 0 0 0 2 1.9h3.6a2 2 0 0 0 2-1.9L16.5 7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 10.5v5.5M14 10.5v5.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
 }
