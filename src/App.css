@@ -755,6 +755,32 @@
   font: inherit;
 }
 
+.importPreviewCard {
+  gap: 16px;
+}
+
+.importAnalysisRow {
+  align-items: flex-start;
+}
+
+.importMatchPill {
+  white-space: nowrap;
+}
+
+.importDayItemRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.importDayItemRow:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 .planNameInput {
   width: 100%;
   border: 0;

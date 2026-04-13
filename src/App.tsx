@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
+import * as XLSX from 'xlsx'
 import './App.css'
 import { hasSupabaseEnv, supabase, supabaseUrl } from './lib/supabase'
 
@@ -24,6 +25,10 @@ type ExerciseForm = { kind: TK; name: string; category: string; equipment: strin
 type PlanForm = { name: string; focus: string }
 type Toast = { id: string; message: string }
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; note: string }
+type WorkbookPreview = { fileName: string; sheets: Array<{ name: string; rows: string[][] }> }
+type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: string; defaultType: TT; progressMetric: PM; usedOnDays: string[] }
+type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
+type ImportedPlanAnalysis = { summary: string; warnings: string[]; items: ImportedAnalysisItem[]; days: ImportedAnalysisDay[] }
 type ConfirmState =
   | { kind: 'delete-run'; runId: string; title: string; body: string }
   | { kind: 'delete-plan'; planId: string; title: string; body: string }
@@ -73,6 +78,99 @@ const sanitizeAllowedTypes = (kind: TK, allowed: TT[] | undefined, defaultType: 
   return Array.from(new Set(next.length ? [...next, defaultType] : [defaultType]))
 }
 const compareExercises = (a: Exercise, b: Exercise) => kindOrder[a.kind] - kindOrder[b.kind] || a.name.localeCompare(b.name)
+const compareStrings = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' })
+const normalizeCatalogName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+const importPlanName = (date = new Date()) => {
+  const yyyy = date.getFullYear()
+  const mm = `${date.getMonth() + 1}`.padStart(2, '0')
+  const dd = `${date.getDate()}`.padStart(2, '0')
+  return `New Plan - ${yyyy}${mm}${dd}`
+}
+const validTargetTypes = new Set<TT>(['count', 'sets', 'duration', 'distance', 'for-time', 'weighted'])
+const validProgressMetrics = new Set<PM>(['count', 'time', 'weight'])
+const validRefs = new Set<RM>(['last-result', 'personal-best'])
+const safeImportedType = (kind: TK, type: TT): TT => sanitizeExerciseDefaultType(kind, type)
+const allowedTypesFromImportedItems = (kind: TK, itemTypes: TT[], defaultType: TT) => sanitizeAllowedTypes(kind, itemTypes.map((type) => safeImportedType(kind, type)), defaultType)
+const targetForType = (type: TT, target: Target): Target => {
+  if (type === 'count') return { count: Math.max(1, Number(target.count ?? 1)) }
+  if (type === 'sets') return { sets: Math.max(1, Number(target.sets ?? 3)), reps: Math.max(1, Number(target.reps ?? 10)) }
+  if (type === 'duration') return { seconds: Math.max(10, Number(target.seconds ?? 60)) }
+  if (type === 'distance') return { distance: Math.max(0.1, Number(target.distance ?? 1)), unit: target.unit === 'km' ? 'km' : 'mi' as 'mi' | 'km' }
+  if (type === 'for-time') return { count: Math.max(1, Number(target.count ?? 10)) }
+  return { sets: Math.max(1, Number(target.sets ?? 3)), reps: Math.max(1, Number(target.reps ?? 8)), weight: Math.max(0, Number(target.weight ?? 10)) }
+}
+const workbookPreviewFromFile = async (file: File): Promise<WorkbookPreview> => {
+  const buffer = await file.arrayBuffer()
+  const workbook = XLSX.read(buffer, { type: 'array' })
+  const sheets = workbook.SheetNames.slice(0, 8).map((name) => {
+    const sheet = workbook.Sheets[name]
+    const rawRows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, { header: 1, raw: false, defval: '' })
+    const rows = rawRows
+      .slice(0, 180)
+      .map((row) => row.slice(0, 20).map((value) => `${value ?? ''}`.trim()))
+      .filter((row) => row.some((cell) => cell))
+    return { name, rows }
+  }).filter((sheet) => sheet.rows.length > 0)
+  return { fileName: file.name, sheets }
+}
+const parsedAnalysisFromResponse = (payload: unknown): ImportedPlanAnalysis | null => {
+  if (!payload || typeof payload !== 'object') return null
+  const candidate = payload as Partial<ImportedPlanAnalysis>
+  if (!Array.isArray(candidate.items) || !Array.isArray(candidate.days)) return null
+  const items: ImportedAnalysisItem[] = []
+  candidate.items.forEach((item) => {
+    if (!item || typeof item !== 'object') return
+    const next = item as Partial<ImportedAnalysisItem>
+    if (!next.name?.trim()) return
+    const kind = sanitizeExerciseKind(next.kind)
+    const defaultType = safeImportedType(kind, validTargetTypes.has(next.defaultType as TT) ? next.defaultType as TT : 'count')
+    const progressMetric = validProgressMetrics.has(next.progressMetric as PM)
+      ? next.progressMetric as PM
+      : (defaultType === 'duration' || defaultType === 'distance' || defaultType === 'for-time' ? 'time' : defaultType === 'weighted' ? 'weight' : 'count')
+    items.push({
+      name: next.name.trim(),
+      kind,
+      category: next.category?.trim() || defaultCategoryForKind(kind),
+      notes: next.notes?.trim() ?? '',
+      defaultType,
+      progressMetric: kind === 'habit' && progressMetric === 'weight' ? (defaultType === 'duration' ? 'time' : 'count') : progressMetric,
+      usedOnDays: Array.isArray(next.usedOnDays) ? next.usedOnDays.map((entry) => `${entry}`).filter(Boolean) : [],
+    })
+  })
+  const days: ImportedAnalysisDay[] = []
+  candidate.days.forEach((day) => {
+    if (!day || typeof day !== 'object') return
+    const nextDay = day as Partial<ImportedAnalysisDay>
+    if (!nextDay.label?.trim() || !Array.isArray(nextDay.items)) return
+    const itemsForDay: ImportedAnalysisDay['items'] = []
+    nextDay.items.forEach((item) => {
+      if (!item || typeof item !== 'object') return
+      const nextItem = item as Partial<ImportedAnalysisDay['items'][number]>
+      if (!nextItem.name?.trim()) return
+      const type = validTargetTypes.has(nextItem.type as TT) ? nextItem.type as TT : 'count'
+      itemsForDay.push({
+        name: nextItem.name.trim(),
+        type,
+        target: targetForType(type, typeof nextItem.target === 'object' && nextItem.target ? nextItem.target as Target : {}),
+        ref: validRefs.has(nextItem.ref as RM) ? nextItem.ref as RM : 'last-result',
+        note: nextItem.note?.trim() ?? '',
+      })
+    })
+    if (!itemsForDay.length) return
+    days.push({
+      label: nextDay.label.trim(),
+      notes: nextDay.notes?.trim() ?? '',
+      items: itemsForDay,
+    })
+  })
+  if (items.length === 0 || days.length === 0) return null
+  return {
+    summary: candidate.summary?.trim() || 'Spreadsheet analyzed and converted into a plan preview.',
+    warnings: Array.isArray(candidate.warnings) ? candidate.warnings.map((entry) => `${entry}`.trim()).filter(Boolean) : [],
+    items,
+    days,
+  }
+}
 const emptyExerciseForm = (kind: TK = 'exercise'): ExerciseForm => ({ kind, name: '', category: defaultCategoryForKind(kind), equipment: '', notes: '', defaultType: 'count', allowed: ['count'], target: blank('count'), refs: ['last-result', 'personal-best'], progressMetric: 'count' })
 const formFromExercise = (exercise: Exercise): ExerciseForm => ({ kind: exercise.kind, name: exercise.name, category: exercise.category, equipment: exercise.equipment, notes: exercise.notes, defaultType: exercise.defaultType, allowed: [...exercise.allowed], target: clone(exercise.target), refs: [...exercise.refs], progressMetric: exercise.progressMetric })
 const emptyPlanForm = (): PlanForm => ({ name: '', focus: '' })
@@ -708,6 +806,9 @@ export default function App() {
   const [pendingImport, setPendingImport] = useState<LegacyState | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [planForm, setPlanForm] = useState<PlanForm>(() => emptyPlanForm())
+  const [importAnalysis, setImportAnalysis] = useState<ImportedPlanAnalysis | null>(null)
+  const [importWorkbook, setImportWorkbook] = useState<WorkbookPreview | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
   const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('data')
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
   const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
@@ -720,6 +821,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [confirmState, setConfirmState] = useState<ConfirmState>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
+  const planImportInputRef = useRef<HTMLInputElement | null>(null)
   const dayDetailRef = useRef<HTMLElement | null>(null)
   const exerciseDetailRef = useRef<HTMLElement | null>(null)
   const planDetailRef = useRef<HTMLElement | null>(null)
@@ -798,6 +900,16 @@ export default function App() {
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
   const sortedExercises = useMemo(() => [...state.exercises].sort(compareExercises), [state.exercises])
   const filteredLibraryExercises = useMemo(() => sortedExercises.filter((exercise) => exercise.kind === libraryFilter), [libraryFilter, sortedExercises])
+  const catalogMatchesByNormalizedName = useMemo(() => {
+    const matchMap = new Map<string, Exercise>()
+    sortedExercises.forEach((exercise) => {
+      const key = normalizeCatalogName(exercise.name)
+      if (!matchMap.has(key)) {
+        matchMap.set(key, exercise)
+      }
+    })
+    return matchMap
+  }, [sortedExercises])
   const starterExercises = useMemo(() => catalogExercisesFromSlices(state.plans, state.runs, state.schedule, state.logs), [state.plans, state.runs, state.schedule, state.logs])
   const starterPlans = useMemo(() => catalogPlansFromSlices(state.exercises, state.runs, state.schedule, state.logs), [state.exercises, state.runs, state.schedule, state.logs])
   const dayByDate = useMemo(() => Object.fromEntries(state.schedule.map((x) => [x.date, x])), [state.schedule])
@@ -806,6 +918,16 @@ export default function App() {
     const completedIds = new Set(state.logs.filter((entry) => entry.done).map((entry) => entry.exerciseId))
     return sortedExercises.filter((exercise) => completedIds.has(exercise.id))
   }, [sortedExercises, state.logs])
+  const importedItemMatches = useMemo(() => {
+    if (!importAnalysis) return []
+    return importAnalysis.items
+      .slice()
+      .sort((a, b) => compareStrings(a.name, b.name))
+      .map((item) => ({
+        item,
+        existing: catalogMatchesByNormalizedName.get(normalizeCatalogName(item.name)) ?? null,
+      }))
+  }, [catalogMatchesByNormalizedName, importAnalysis])
   useEffect(() => {
     setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
   }, [progressExercises])
@@ -1582,6 +1704,140 @@ export default function App() {
     setPendingImport(null)
     pushToast('Backup imported.')
   }
+  const clearPlanImport = () => {
+    setImportAnalysis(null)
+    setImportWorkbook(null)
+    if (planImportInputRef.current) {
+      planImportInputRef.current.value = ''
+    }
+  }
+  const handlePlanSpreadsheetImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (!supabase || !user) {
+      pushToast('Sign in to import a spreadsheet into a plan.')
+      event.target.value = ''
+      return
+    }
+    try {
+      setImportBusy(true)
+      setImportAnalysis(null)
+      const workbook = await workbookPreviewFromFile(file)
+      if (workbook.sheets.length === 0) {
+        pushToast('That spreadsheet did not contain readable rows.')
+        return
+      }
+      const { data, error } = await supabase.functions.invoke('analyze-plan-sheet', {
+        body: {
+          fileName: workbook.fileName,
+          sheets: workbook.sheets,
+          catalog: state.exercises.map((exercise) => ({
+            name: exercise.name,
+            kind: exercise.kind,
+            category: exercise.category,
+            defaultType: exercise.defaultType,
+          })),
+        },
+      })
+      if (error) {
+        pushToast('Could not analyze that spreadsheet.')
+        return
+      }
+      const parsed = parsedAnalysisFromResponse(data)
+      if (!parsed) {
+        pushToast('The spreadsheet analysis came back in an unexpected format.')
+        return
+      }
+      setImportWorkbook(workbook)
+      setImportAnalysis(parsed)
+      pushToast('Spreadsheet analyzed. Review the plan preview below.')
+    } catch {
+      pushToast('Could not read that spreadsheet.')
+    } finally {
+      setImportBusy(false)
+      event.target.value = ''
+    }
+  }
+  const createPlanFromImport = async () => {
+    if (!importAnalysis) return
+    setImportBusy(true)
+    try {
+      const nextExercises = [...state.exercises]
+      const exerciseIdByNormalizedName = new Map<string, string>(sortedExercises.map((exercise) => [normalizeCatalogName(exercise.name), exercise.id]))
+      const importedGroups = new Map<string, { item: ImportedAnalysisItem; types: Set<TT>; sampleTarget?: Target }>()
+      importAnalysis.items.forEach((item) => {
+        importedGroups.set(normalizeCatalogName(item.name), { item, types: new Set([item.defaultType]) })
+      })
+      importAnalysis.days.forEach((day0) => {
+        day0.items.forEach((item) => {
+          const key = normalizeCatalogName(item.name)
+          const existing = importedGroups.get(key)
+          if (existing) {
+            existing.types.add(item.type)
+            existing.sampleTarget ??= item.target
+          }
+        })
+      })
+
+      for (const [normalizedName, entry] of importedGroups.entries()) {
+        if (exerciseIdByNormalizedName.has(normalizedName)) continue
+        const defaultType = safeImportedType(entry.item.kind, entry.item.defaultType)
+        const createdExercise: Exercise = {
+          id: id('ex'),
+          kind: entry.item.kind,
+          name: entry.item.name,
+          category: entry.item.category || defaultCategoryForKind(entry.item.kind),
+          equipment: entry.item.kind === 'habit' ? '' : 'Open',
+          notes: entry.item.notes,
+          defaultType,
+          allowed: allowedTypesFromImportedItems(entry.item.kind, [...entry.types], defaultType),
+          target: targetForType(defaultType, entry.sampleTarget ?? blank(defaultType)),
+          refs: ['last-result', 'personal-best'],
+          progressMetric: entry.item.kind === 'habit' && entry.item.progressMetric === 'weight' ? (defaultType === 'duration' ? 'time' : 'count') : entry.item.progressMetric,
+        }
+        nextExercises.push(createdExercise)
+        exerciseIdByNormalizedName.set(normalizedName, createdExercise.id)
+      }
+
+      const nextPlan: Plan = {
+        id: id('plan'),
+        name: importPlanName(),
+        focus: importAnalysis.summary,
+        days: importAnalysis.days.map((day0, index) => ({
+          id: id('pd'),
+          label: day0.label || `Day ${index + 1}`,
+          rest: day0.items.length === 0,
+          notes: day0.notes,
+          items: day0.items.map((item) => ({
+            id: id('pi'),
+            exerciseId: exerciseIdByNormalizedName.get(normalizeCatalogName(item.name)) ?? '',
+            type: item.type,
+            target: targetForType(item.type, item.target),
+            ref: item.ref,
+          })).filter((item) => item.exerciseId),
+        })),
+      }
+
+      const exercisesOk = await persistExercisesCollection(nextExercises)
+      if (!exercisesOk) {
+        pushToast('Could not save imported items.')
+        return
+      }
+      const plansOk = await persistPlans([...state.plans, nextPlan], { changedPlanIds: [nextPlan.id] })
+      if (!plansOk) {
+        pushToast('Could not create imported plan.')
+        return
+      }
+      setState((current) => ({ ...current, exercises: nextExercises, plans: [...current.plans, nextPlan] }))
+      setSelectedPlanId(nextPlan.id)
+      setPlanForm(formFromPlan(nextPlan))
+      clearPlanImport()
+      focusPlanEditor()
+      pushToast(`${nextPlan.name} created.`)
+    } finally {
+      setImportBusy(false)
+    }
+  }
 
   const toggleDone = (date: string, item: Item) => {
     const nextDone = !item.done
@@ -1703,24 +1959,17 @@ export default function App() {
     setPlanForm(formFromPlan(nextPlan))
     focusPlanEditor()
   }
-  const deletePlan = async (planId: string, options?: { keepCompletedDays?: boolean }) => {
-    const keepCompletedDays = options?.keepCompletedDays ?? false
+  const deletePlan = async (planId: string) => {
     const remainingPlans = state.plans.filter((p) => p.id !== planId)
     const removedRunIds = new Set(state.runs.filter((run) => run.planId === planId).map((run) => run.id))
-    const keptDays: Day[] = []
     const removedItemIds = new Set<string>()
 
     state.schedule.forEach((day0) => {
       if (!day0.runId || !removedRunIds.has(day0.runId)) return
-      const isCompleted = day0.items.length > 0 && day0.items.every((item) => item.done)
-      if (keepCompletedDays && isCompleted) {
-        keptDays.push(normalizeScheduleDay({ ...day0, runId: undefined, dayNo: undefined, skipped: false }))
-        return
-      }
       day0.items.forEach((item) => removedItemIds.add(item.id))
     })
 
-    const nextSchedule = [...state.schedule.filter((day0) => !day0.runId || !removedRunIds.has(day0.runId)), ...keptDays]
+    const nextSchedule = state.schedule.filter((day0) => !day0.runId || !removedRunIds.has(day0.runId))
       .sort((a, b) => a.date.localeCompare(b.date))
     const nextRuns = state.runs.filter((run) => run.planId !== planId)
     const nextLogs = state.logs.filter((entry) => !entry.sourceItemId || !removedItemIds.has(entry.sourceItemId))
@@ -1797,7 +2046,7 @@ export default function App() {
   const confirmAction = async () => {
     if (!confirmState) return
     if (confirmState.kind === 'delete-run') await deleteRun(confirmState.runId, { keepCompletedDays: keepCompletedPlanDays })
-    if (confirmState.kind === 'delete-plan') await deletePlan(confirmState.planId, { keepCompletedDays: keepCompletedPlanDays })
+    if (confirmState.kind === 'delete-plan') await deletePlan(confirmState.planId)
     if (confirmState.kind === 'delete-exercise') await deleteExercise(confirmState.exerciseId)
     if (confirmState.kind === 'import-data') await importData()
     if (confirmState.kind === 'reset-all-data') await resetAllData()
@@ -2099,7 +2348,7 @@ export default function App() {
         <div className="confirmCard">
           <h3>{confirmState.title}</h3>
           <p>{confirmState.body}</p>
-          {(confirmState.kind === 'delete-plan' || confirmState.kind === 'delete-run') && <label className="inline confirmOption">
+          {confirmState.kind === 'delete-run' && <label className="inline confirmOption">
             <input type="checkbox" checked={keepCompletedPlanDays} onChange={(e) => setKeepCompletedPlanDays(e.target.checked)} />
             <span>Keep already completed scheduled days as standalone history</span>
           </label>}
@@ -2178,8 +2427,56 @@ export default function App() {
         <section className="panel stack">
           <div className="row">
             <div><p className="eyebrow">Plans</p><h2>Your plans</h2></div>
-            <button className="pill" onClick={startNewPlan}>New plan</button>
+            <div className="nav">
+              <button className="pill" onClick={() => planImportInputRef.current?.click()} disabled={importBusy || !hasSupabaseEnv}>{importBusy ? 'Analyzing...' : 'Import spreadsheet'}</button>
+              <button className="pill" onClick={startNewPlan}>New plan</button>
+            </div>
           </div>
+          <input ref={planImportInputRef} className="hiddenInput" type="file" accept=".xlsx,.xls,.csv" onChange={handlePlanSpreadsheetImport} />
+          {!hasSupabaseEnv && <p className="mutedCopy">Spreadsheet import uses Supabase Edge Functions, so it becomes available once Supabase is connected.</p>}
+          {importAnalysis && <div className="card stack importPreviewCard">
+            <div>
+              <p className="eyebrow">Spreadsheet analysis</p>
+              <h3>{importWorkbook?.fileName ?? 'Imported spreadsheet'}</h3>
+              <p>{importAnalysis.summary}</p>
+            </div>
+            {importAnalysis.warnings.length > 0 && <div className="stack compactStack">
+              {importAnalysis.warnings.map((warning) => <p key={warning} className="mutedCopy">Warning: {warning}</p>)}
+            </div>}
+            <div className="stack compactStack">
+              <div><p className="eyebrow">Detected items</p></div>
+              {importedItemMatches.map(({ item, existing }) => <div key={`${item.kind}-${item.name}`} className="listItem importAnalysisRow">
+                <div className="listItemContent">
+                  <strong>{existing ? item.name : `* ${item.name}`}</strong>
+                  <span className="listMeta">{TRACKABLE_KIND_LABEL[item.kind]} / {item.category}{existing ? ` / In catalog as ${existing.name}` : ' / Needs added to catalog'}</span>
+                </div>
+                <span className={existing ? 'pill importMatchPill' : 'pill active importMatchPill'}>{item.usedOnDays.length} day{item.usedOnDays.length === 1 ? '' : 's'}</span>
+              </div>)}
+            </div>
+            <div className="stack compactStack">
+              <div><p className="eyebrow">Per day breakdown</p></div>
+              {importAnalysis.days.map((day0) => <div key={day0.label} className="card stack planDayCard">
+                <div>
+                  <strong>{day0.label}</strong>
+                  {day0.notes && <p>{day0.notes}</p>}
+                </div>
+                <div className="stack compactStack">
+                  {day0.items.map((item, index) => {
+                    const existing = catalogMatchesByNormalizedName.get(normalizeCatalogName(item.name))
+                    return <div key={`${day0.label}-${item.name}-${index}`} className="importDayItemRow">
+                      <span>{existing ? item.name : `* ${item.name}`}</span>
+                      <strong>{sum(item.type, item.target)}</strong>
+                    </div>
+                  })}
+                </div>
+              </div>)}
+            </div>
+            <div className="nav">
+              <button className="primary" onClick={() => void createPlanFromImport()} disabled={importBusy}>{importBusy ? 'Creating...' : 'Create plan'}</button>
+              <button className="pill" onClick={clearPlanImport} disabled={importBusy}>Cancel</button>
+            </div>
+            <p className="mutedCopy">Missing items are marked with `*` and will be added to the catalog before the plan is created.</p>
+          </div>}
           <div className="stack">
             {state.plans.map((p) => <div key={p.id} className={selectedPlanId === p.id ? 'listItem activeItem planListRow' : 'listItem planListRow'}>
               <button className="planListButton" onClick={() => selectPlan(p.id)}><strong>{p.name}</strong></button>
@@ -2221,7 +2518,7 @@ export default function App() {
               <button className="iconPill dangerPill destructiveIconButton" onClick={() => {
                 if (!selectedPlanId) return
                 setKeepCompletedPlanDays(true)
-                setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'Remove this plan template and its scheduled run days. You can keep completed days as standalone history or remove everything tied to the plan.' })
+                setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'This will remove the plan template and any active runs tied to it.' })
               }} aria-label="Delete plan"><TrashIcon /></button>
             </div>
             {plan.days.length === 0 && <button className="addDayButton" onClick={() => addPlanDayAt(0)}>+ Add day</button>}
