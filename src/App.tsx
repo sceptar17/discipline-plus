@@ -1364,11 +1364,12 @@ export default function App() {
 
       const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
       if (authUserRef.current !== ownerId) return
-      const resolvedPlanId = selectedPlanId && remotePlans.some((plan0) => plan0.id === selectedPlanId) ? selectedPlanId : remotePlans[0]?.id ?? null
-      const resolvedPlan = remotePlans.find((plan0) => plan0.id === resolvedPlanId) ?? null
+      const activePlan = selectedPlanId ? remotePlans.find((plan0) => plan0.id === selectedPlanId) ?? null : null
       setState((current) => ({ ...current, plans: remotePlans }))
-      setSelectedPlanId(resolvedPlanId)
-      setPlanForm(resolvedPlan ? formFromPlan(resolvedPlan) : emptyPlanForm())
+      setSelectedPlanId(activePlan?.id ?? null)
+      if (activePlan) {
+        setPlanForm(formFromPlan(activePlan))
+      }
     }
 
     void syncPlans()
@@ -2452,12 +2453,14 @@ export default function App() {
           <div className="stack">
             <div><p className="eyebrow">Active runs</p></div>
             {state.runs.map((r) => {
+              const linkedPlan = r.planId ? state.plans.find((plan0) => plan0.id === r.planId) : null
               const runDays = state.schedule.filter((x) => x.runId === r.id)
               const completedDays = runDays.filter((day) => day.items.length > 0 && day.items.every((item) => item.done)).length
-              const progress = runDays.length ? Math.round((completedDays / runDays.length) * 100) : 0
+              const totalDays = linkedPlan?.days.length ?? runDays.length
+              const progress = totalDays ? Math.round((completedDays / totalDays) * 100) : 0
               return <article key={r.id} className="card stack">
                 <div className="row">
-                  <div><h3>{runDisplayName(r, state.plans, today)}</h3><p>{completedDays} of {runDays.length} days complete</p></div>
+                  <div><h3>{runDisplayName(r, state.plans, today)}</h3><p>{completedDays} of {totalDays} days complete</p></div>
                   <div className="dayRowActions"><button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })} aria-label={`Remove active run ${r.name}`}><TrashIcon /></button></div>
                 </div>
                 <div className="progressTrack" aria-label={`${progress}% complete`}>
