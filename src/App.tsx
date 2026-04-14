@@ -29,6 +29,7 @@ type WorkbookPreview = { fileName: string; sheets: Array<{ name: string; rows: s
 type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: string; defaultType: TT; progressMetric: PM; usedOnDays: string[] }
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
 type ImportedPlanAnalysis = { summary: string; warnings: string[]; items: ImportedAnalysisItem[]; days: ImportedAnalysisDay[] }
+type ExerciseEditorMode = 'existing' | 'new'
 type ConfirmState =
   | { kind: 'delete-run'; runId: string; title: string; body: string }
   | { kind: 'delete-plan'; planId: string; title: string; body: string }
@@ -757,6 +758,7 @@ export default function App() {
   const [showPastDays, setShowPastDays] = useState(false)
   const [shift, setShift] = useState(1)
   const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
+  const [exerciseEditorMode, setExerciseEditorMode] = useState<ExerciseEditorMode>(state.exercises[0] ? 'existing' : 'new')
   const [exerciseForm, setExerciseForm] = useState<ExerciseForm>(() => state.exercises[0] ? formFromExercise(state.exercises[0]) : emptyExerciseForm())
   const [libraryFilter, setLibraryFilter] = useState<TK>('exercise')
   const [selectedProgressExerciseId, setSelectedProgressExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
@@ -818,6 +820,7 @@ export default function App() {
       setSelected(nextToday)
       setMonth(monthKey(nextToday))
       setSelectedExerciseId(next.exercises[0]?.id ?? null)
+      setExerciseEditorMode(next.exercises[0] ? 'existing' : 'new')
       setExerciseForm(next.exercises[0] ? formFromExercise(next.exercises[0]) : emptyExerciseForm())
       setSelectedProgressExerciseId(next.exercises[0]?.id ?? null)
       const nextPlan = next.plans[0]
@@ -891,13 +894,21 @@ export default function App() {
     setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
   }, [progressExercises])
   useEffect(() => {
+    if (exerciseEditorMode === 'new') {
+      if (exerciseForm.kind !== libraryFilter) {
+        setExerciseForm(emptyExerciseForm(libraryFilter))
+      }
+      return
+    }
     const selectedExercise = selectedExerciseId ? exById[selectedExerciseId] : null
-    if (selectedExercise && selectedExercise.kind === libraryFilter) return
+    if (selectedExercise && selectedExercise.kind === libraryFilter) {
+      return
+    }
     const nextExercise = filteredLibraryExercises[0] ?? null
-    if (!nextExercise && selectedExerciseId === null && exerciseForm.kind === libraryFilter) return
     setSelectedExerciseId(nextExercise?.id ?? null)
+    setExerciseEditorMode(nextExercise ? 'existing' : 'new')
     setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm(libraryFilter))
-  }, [exById, exerciseForm.kind, filteredLibraryExercises, libraryFilter, selectedExerciseId])
+  }, [exById, exerciseEditorMode, exerciseForm.kind, filteredLibraryExercises, libraryFilter, selectedExerciseId])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
@@ -1318,6 +1329,7 @@ export default function App() {
         if (seedError || !active || authUserRef.current !== ownerId) return
         setState((current) => ({ ...current, exercises: starterExercises }))
         setSelectedExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
+        setExerciseEditorMode((current) => current === 'new' ? current : (starterExercises[0] ? 'existing' : 'new'))
         setSelectedProgressExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
         return
       }
@@ -1326,6 +1338,7 @@ export default function App() {
       if (authUserRef.current !== ownerId) return
       setState((current) => ({ ...current, exercises: remoteExercises }))
       setSelectedExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
+      setExerciseEditorMode((current) => current === 'new' ? current : (remoteExercises[0] ? 'existing' : 'new'))
       setSelectedProgressExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
     }
 
@@ -1367,8 +1380,11 @@ export default function App() {
 
       const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
       if (authUserRef.current !== ownerId) return
+      const resolvedPlanId = selectedPlanId && remotePlans.some((plan0) => plan0.id === selectedPlanId) ? selectedPlanId : remotePlans[0]?.id ?? null
+      const resolvedPlan = remotePlans.find((plan0) => plan0.id === resolvedPlanId) ?? null
       setState((current) => ({ ...current, plans: remotePlans }))
-      setSelectedPlanId((current) => current && remotePlans.some((plan0) => plan0.id === current) ? current : remotePlans[0]?.id ?? null)
+      setSelectedPlanId(resolvedPlanId)
+      setPlanForm(resolvedPlan ? formFromPlan(resolvedPlan) : emptyPlanForm())
     }
 
     void syncPlans()
@@ -1549,6 +1565,7 @@ export default function App() {
     setSelected(nextToday)
     setMonth(monthKey(nextToday))
     setSelectedExerciseId(next.exercises[0]?.id ?? null)
+    setExerciseEditorMode(next.exercises[0] ? 'existing' : 'new')
     setExerciseForm(next.exercises[0] ? formFromExercise(next.exercises[0]) : emptyExerciseForm())
     setSelectedProgressExerciseId(next.exercises[0]?.id ?? null)
     setSelectedPlanId(null)
@@ -1932,6 +1949,7 @@ export default function App() {
       logs: s.logs.filter((entry) => entry.exerciseId !== exerciseId),
     }))
     setSelectedExerciseId(nextExercise?.id ?? null)
+    setExerciseEditorMode(nextExercise ? 'existing' : 'new')
     setSelectedProgressExerciseId((current) => current === exerciseId ? nextExercise?.id ?? null : current)
     setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm())
   }
@@ -2041,13 +2059,15 @@ export default function App() {
 
   const saveExercise = async () => {
     if (!exerciseForm.name.trim()) return
+    const isEditingExisting = exerciseEditorMode === 'existing' && !!selectedExerciseId
+    const nextExerciseId = isEditingExisting && selectedExerciseId ? selectedExerciseId : id('ex')
     const nextKind = sanitizeExerciseKind(exerciseForm.kind)
     const nextDefaultType = sanitizeExerciseDefaultType(nextKind, exerciseForm.defaultType)
     const nextProgressMetric = nextKind === 'habit' && exerciseForm.progressMetric === 'weight'
       ? (nextDefaultType === 'duration' ? 'time' : 'count')
       : exerciseForm.progressMetric
     const nextExercise: Exercise = {
-      id: selectedExerciseId ?? id('ex'),
+      id: nextExerciseId,
       kind: nextKind,
       name: exerciseForm.name.trim(),
       category: exerciseForm.category || defaultCategoryForKind(nextKind),
@@ -2084,17 +2104,19 @@ export default function App() {
 
     setState((s) => ({
       ...s,
-      exercises: selectedExerciseId
+      exercises: isEditingExisting
         ? s.exercises.map((ex) => ex.id === selectedExerciseId ? nextExercise : ex)
         : [...s.exercises, nextExercise],
     }))
 
     setSelectedExerciseId(nextExercise.id)
+    setExerciseEditorMode('existing')
     setExerciseForm(formFromExercise(nextExercise))
   }
 
   const startNewExercise = () => {
     setSelectedExerciseId(null)
+    setExerciseEditorMode('new')
     setExerciseForm(emptyExerciseForm(libraryFilter))
     focusExerciseEditor()
   }
@@ -2103,6 +2125,7 @@ export default function App() {
     const exercise = exById[exerciseId]
     if (!exercise) return
     setSelectedExerciseId(exerciseId)
+    setExerciseEditorMode('existing')
     setExerciseForm(formFromExercise(exercise))
     focusExerciseEditor()
   }
@@ -2307,11 +2330,11 @@ export default function App() {
             {(['exercise', 'habit'] as const).map((kind) => <button key={kind} className={libraryFilter === kind ? 'pill active' : 'pill'} onClick={() => setLibraryFilter(kind)}>{TRACKABLE_KIND_LABEL[kind]}s</button>)}
           </div>
           <div className="stack">
-            {filteredLibraryExercises.map((ex) => <button key={ex.id} className={selectedExerciseId === ex.id ? 'listItem activeItem' : 'listItem'} onClick={() => selectExercise(ex.id)}><span className="listItemContent"><strong>{ex.name}</strong><span className="listMeta">{ex.category}{ex.kind === 'habit' ? <span className="kindBadge subtleBadge">Habit</span> : null}</span></span></button>)}
+            {filteredLibraryExercises.map((ex) => <button key={ex.id} className={exerciseEditorMode === 'existing' && selectedExerciseId === ex.id ? 'listItem activeItem' : 'listItem'} onClick={() => selectExercise(ex.id)}><span className="listItemContent"><strong>{ex.name}</strong><span className="listMeta">{ex.category}{ex.kind === 'habit' ? <span className="kindBadge subtleBadge">Habit</span> : null}</span></span></button>)}
           </div>
         </section>
         <section ref={exerciseDetailRef} className="panel stack">
-          <div><p className="eyebrow">Manage {exerciseForm.kind}</p><h2>{selectedExerciseId ? `Update ${exerciseForm.kind}` : `Create ${exerciseForm.kind}`}</h2></div>
+          <div><p className="eyebrow">Manage {exerciseForm.kind}</p><h2>{exerciseEditorMode === 'existing' ? `Update ${exerciseForm.kind}` : `Create ${exerciseForm.kind}`}</h2></div>
           <div><span className="fieldLabel">Type</span><div className="chips">{(['exercise', 'habit'] as const).map((kind) => { const on = exerciseForm.kind === kind; return <button key={kind} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((current) => {
             const nextKind = kind
             const nextDefaultType = sanitizeExerciseDefaultType(nextKind, current.defaultType)
@@ -2351,8 +2374,8 @@ export default function App() {
           <div><span className="fieldLabel">Allowed target types</span><div className="chips">{allowedTypesForKind(exerciseForm.kind).map((t) => { const on = exerciseForm.allowed.includes(t); return <button key={t} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, allowed: on ? (x.allowed.filter((y) => y !== t).length ? x.allowed.filter((y) => y !== t) : [x.defaultType]) : [...x.allowed, t] }))}>{TT_LABEL[t]}</button> })}</div></div>
           <div><span className="fieldLabel">Reference choices</span><div className="chips">{(Object.keys(RM_LABEL) as RM[]).map((r) => { const on = exerciseForm.refs.includes(r); return <button key={r} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, refs: on ? x.refs.filter((y) => y !== r) : [...x.refs, r] }))}>{RM_LABEL[r]}</button> })}</div></div>
           <div className="nav">
-            <button className="primary" onClick={saveExercise}>{selectedExerciseId ? 'Save changes' : `Create ${exerciseForm.kind}`}</button>
-            {selectedExerciseId && <button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: `Delete ${exerciseForm.kind}?`, body: 'This will remove the item from the library, plans, scheduled days, and progress history.' })} aria-label={`Delete ${exerciseForm.kind}`}><TrashIcon /></button>}
+            <button className="primary" onClick={saveExercise}>{exerciseEditorMode === 'existing' ? 'Save changes' : `Create ${exerciseForm.kind}`}</button>
+            {exerciseEditorMode === 'existing' && selectedExerciseId && <button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: `Delete ${exerciseForm.kind}?`, body: 'This will remove the item from the library, plans, scheduled days, and progress history.' })} aria-label={`Delete ${exerciseForm.kind}`}><TrashIcon /></button>}
           </div>
         </section>
       </main>}
