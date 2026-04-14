@@ -417,6 +417,41 @@ function referenceTarget(history: Log[], exercise: Exercise, mode: RM, type: TT,
   return next
 }
 
+function applyReferenceToDraft(history: Log[], exercise: Exercise, mode: RM, draft: ItemDraft): ItemDraft {
+  const target = referenceTarget(history, exercise, mode, draft.type, draft.target)
+  const rows = history
+    .filter((h) => h.exerciseId === exercise.id && h.done)
+    .sort((a, b) => b.date.localeCompare(a.date))
+
+  if (!rows.length) {
+    return { ...draft, target }
+  }
+
+  const progressMetric = effectiveProgressMetric(exercise, draft.type)
+  const source = mode === 'last-result'
+    ? rows[0]
+    : rows.reduce((acc, row) => {
+        const a = metric(progressMetric, acc), b = metric(progressMetric, row)
+        if (b === undefined) return acc
+        if (a === undefined) return row
+        return progressMetric === 'time' ? (b < a ? row : acc) : (b > a ? row : acc)
+      }, rows[0])
+
+  return {
+    ...draft,
+    target,
+    timeText: progressMetric === 'time'
+      ? (source.result.timeText ?? (source.result.seconds !== undefined ? fmtSecs(source.result.seconds) : (target.seconds !== undefined ? fmtSecs(target.seconds) : draft.timeText)))
+      : draft.timeText,
+    weightText: progressMetric === 'weight'
+      ? String(source.result.weight ?? target.weight ?? '')
+      : draft.weightText,
+    countText: progressMetric === 'count'
+      ? String(source.result.count ?? target.count ?? totalCount(target))
+      : draft.countText,
+  }
+}
+
 function referenceSummary(history: Log[], exercise: Exercise, mode: RM, type: TT) {
   const rows = history
     .filter((h) => h.exerciseId === exercise.id && h.done)
@@ -1741,7 +1776,10 @@ export default function App() {
       .filter((h) => h.exerciseId === item.exerciseId && h.done && h.sourceItemId !== item.id)
       .sort((a, b) => b.date.localeCompare(a.date))
     const nextItem = { ...item, done: nextDone }
-    void updateItemOnDate(date, item.id, () => nextItem)
+    const nextSchedule = state.schedule.map((day0) => day0.date === date ? normalizeScheduleDay({ ...day0, items: day0.items.map((existing) => existing.id === item.id ? nextItem : existing) }) : day0)
+    const nextLogs = syncLog(state.logs, date, nextItem)
+    setState((current) => ({ ...current, schedule: nextSchedule, logs: nextLogs }))
+    void persistScheduleData(nextSchedule, state.runs, nextLogs)
 
     if (nextDone && exercise) {
       pushToast(`${exercise.name} complete.`)
@@ -2118,8 +2156,8 @@ export default function App() {
               const expanded = expandedItems[item.id] ?? false
               const draft = itemDrafts[item.id] ?? makeItemDraft(item, ex)
               const progressMetric = effectiveProgressMetric(ex, draft.type)
-              const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target: referenceTarget(derivedHistory, ex, r, draft.type, draft.target) } }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, draft.type)}</button>)
-              return <article key={item.id} className="card">
+              const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: applyReferenceToDraft(derivedHistory, ex, r, current[item.id] ?? makeItemDraft(item, ex)) }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, draft.type)}</button>)
+              return <article key={item.id} className={item.done ? 'card itemCardDone' : 'card'}>
                 <div className="row itemCardRow">
                   <button className={['ring', ex.kind === 'habit' ? 'habitRing' : '', item.done ? 'done' : ''].filter(Boolean).join(' ')} onClick={() => toggleDone(selected, item)} aria-label={`Mark ${ex.name} complete`}><span /></button>
                   <button className="exerciseToggle itemCardToggle" onClick={() => {

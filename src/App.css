@@ -585,6 +585,16 @@
   text-decoration: line-through;
 }
 
+.itemCardDone {
+  color: var(--text-muted);
+}
+
+.itemCardDone h3,
+.itemCardDone .itemTargetBadge,
+.itemCardDone .kindBadge {
+  text-decoration: line-through;
+}
+
 .mutedCopy {
   color: var(--text-muted);
 }
