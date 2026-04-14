@@ -787,6 +787,7 @@ export default function App() {
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
   const authUserRef = useRef<string | null>(null)
   const scheduleSaveTimerRef = useRef<number | null>(null)
+  const scheduleRevisionRef = useRef(0)
   useEffect(() => {
     if (hasSupabaseEnv) return
     localStorage.setItem(KEY, JSON.stringify(state))
@@ -1249,6 +1250,7 @@ export default function App() {
   }, [persistScheduleData])
   const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string; persistMode?: 'queued' | 'immediate' }) => {
     const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
+    scheduleRevisionRef.current += 1
     setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
     if (options?.selectedDate) {
       setSelected(options.selectedDate)
@@ -1382,6 +1384,7 @@ export default function App() {
     const client = supabase
     const ownerId = user.id
     const syncSchedule = async () => {
+      const syncRevision = scheduleRevisionRef.current
       const [{ data: runRows, error: runError }, { data: dayRows, error: dayError }, { data: itemRows, error: itemError }, { data: logRows, error: logError }] = await Promise.all([
         client.from('runs').select('id, plan_id, start_date, name').eq('user_id', user.id).order('start_date', { ascending: true }),
         client.from('schedule_days').select('id, date, notes, skipped, run_id, day_no').eq('user_id', user.id).order('date', { ascending: true }),
@@ -1389,7 +1392,7 @@ export default function App() {
         client.from('logs').select('id, source_item_id, exercise_id, date, type, target, result').eq('user_id', user.id).order('date', { ascending: true }),
       ])
 
-      if (!active || authUserRef.current !== ownerId || runError || dayError || itemError || logError || !runRows || !dayRows || !itemRows || !logRows) return
+      if (!active || authUserRef.current !== ownerId || scheduleRevisionRef.current !== syncRevision || runError || dayError || itemError || logError || !runRows || !dayRows || !itemRows || !logRows) return
 
       if (runRows.length === 0 && dayRows.length === 0 && itemRows.length === 0 && logRows.length === 0) {
         const localSchedule = localScheduleRef.current.schedule
@@ -1397,7 +1400,7 @@ export default function App() {
         const localLogs = localScheduleRef.current.logs
         if (localSchedule.length === 0 && localRuns.length === 0 && localLogs.length === 0) return
         const seeded = await persistScheduleData(localSchedule, localRuns, localLogs)
-        if (!seeded || !active || authUserRef.current !== ownerId) return
+        if (!seeded || !active || authUserRef.current !== ownerId || scheduleRevisionRef.current !== syncRevision) return
         setState((current) => ({ ...current, schedule: localSchedule.map(normalizeScheduleDay), runs: localRuns, logs: localLogs }))
         return
       }
@@ -1405,7 +1408,7 @@ export default function App() {
       const remoteRuns = mapRunRows(runRows)
       const remoteSchedule = mapScheduleRows(dayRows, itemRows)
       const remoteLogs = mapLogRows(logRows)
-      if (authUserRef.current !== ownerId) return
+      if (authUserRef.current !== ownerId || scheduleRevisionRef.current !== syncRevision) return
       setState((current) => ({ ...current, runs: remoteRuns, schedule: remoteSchedule, logs: remoteLogs }))
     }
 
@@ -1778,8 +1781,7 @@ export default function App() {
     const nextItem = { ...item, done: nextDone }
     const nextSchedule = state.schedule.map((day0) => day0.date === date ? normalizeScheduleDay({ ...day0, items: day0.items.map((existing) => existing.id === item.id ? nextItem : existing) }) : day0)
     const nextLogs = syncLog(state.logs, date, nextItem)
-    setState((current) => ({ ...current, schedule: nextSchedule, logs: nextLogs }))
-    void persistScheduleData(nextSchedule, state.runs, nextLogs)
+    void commitScheduleState(nextSchedule, state.runs, nextLogs, { persistMode: 'immediate' })
 
     if (nextDone && exercise) {
       pushToast(`${exercise.name} complete.`)
