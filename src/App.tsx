@@ -893,22 +893,6 @@ export default function App() {
   useEffect(() => {
     setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
   }, [progressExercises])
-  useEffect(() => {
-    if (exerciseEditorMode === 'new') {
-      if (exerciseForm.kind !== libraryFilter) {
-        setExerciseForm(emptyExerciseForm(libraryFilter))
-      }
-      return
-    }
-    const selectedExercise = selectedExerciseId ? exById[selectedExerciseId] : null
-    if (selectedExercise && selectedExercise.kind === libraryFilter) {
-      return
-    }
-    const nextExercise = filteredLibraryExercises[0] ?? null
-    setSelectedExerciseId(nextExercise?.id ?? null)
-    setExerciseEditorMode(nextExercise ? 'existing' : 'new')
-    setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm(libraryFilter))
-  }, [exById, exerciseEditorMode, exerciseForm.kind, filteredLibraryExercises, libraryFilter, selectedExerciseId])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
@@ -2109,9 +2093,22 @@ export default function App() {
         : [...s.exercises, nextExercise],
     }))
 
+    setLibraryFilter(nextExercise.kind)
     setSelectedExerciseId(nextExercise.id)
     setExerciseEditorMode('existing')
     setExerciseForm(formFromExercise(nextExercise))
+  }
+
+  const switchLibraryFilter = (nextFilter: TK) => {
+    setLibraryFilter(nextFilter)
+    if (exerciseEditorMode === 'new') {
+      setExerciseForm((current) => current.kind === nextFilter ? current : emptyExerciseForm(nextFilter))
+      return
+    }
+    const nextExercise = sortedExercises.find((exercise) => exercise.kind === nextFilter) ?? null
+    setSelectedExerciseId(nextExercise?.id ?? null)
+    setExerciseEditorMode(nextExercise ? 'existing' : 'new')
+    setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm(nextFilter))
   }
 
   const startNewExercise = () => {
@@ -2124,6 +2121,7 @@ export default function App() {
   const selectExercise = (exerciseId: string) => {
     const exercise = exById[exerciseId]
     if (!exercise) return
+    setLibraryFilter(exercise.kind)
     setSelectedExerciseId(exerciseId)
     setExerciseEditorMode('existing')
     setExerciseForm(formFromExercise(exercise))
@@ -2327,7 +2325,7 @@ export default function App() {
             <button className="pill" onClick={startNewExercise}>New {libraryFilter}</button>
           </div>
           <div className="nav">
-            {(['exercise', 'habit'] as const).map((kind) => <button key={kind} className={libraryFilter === kind ? 'pill active' : 'pill'} onClick={() => setLibraryFilter(kind)}>{TRACKABLE_KIND_LABEL[kind]}s</button>)}
+            {(['exercise', 'habit'] as const).map((kind) => <button key={kind} className={libraryFilter === kind ? 'pill active' : 'pill'} onClick={() => switchLibraryFilter(kind)}>{TRACKABLE_KIND_LABEL[kind]}s</button>)}
           </div>
           <div className="stack">
             {filteredLibraryExercises.map((ex) => <button key={ex.id} className={exerciseEditorMode === 'existing' && selectedExerciseId === ex.id ? 'listItem activeItem' : 'listItem'} onClick={() => selectExercise(ex.id)}><span className="listItemContent"><strong>{ex.name}</strong><span className="listMeta">{ex.category}{ex.kind === 'habit' ? <span className="kindBadge subtleBadge">Habit</span> : null}</span></span></button>)}
@@ -2335,20 +2333,23 @@ export default function App() {
         </section>
         <section ref={exerciseDetailRef} className="panel stack">
           <div><p className="eyebrow">Manage {exerciseForm.kind}</p><h2>{exerciseEditorMode === 'existing' ? `Update ${exerciseForm.kind}` : `Create ${exerciseForm.kind}`}</h2></div>
-          <div><span className="fieldLabel">Type</span><div className="chips">{(['exercise', 'habit'] as const).map((kind) => { const on = exerciseForm.kind === kind; return <button key={kind} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((current) => {
-            const nextKind = kind
-            const nextDefaultType = sanitizeExerciseDefaultType(nextKind, current.defaultType)
-            return {
-              ...current,
-              kind: nextKind,
-              category: current.kind === nextKind ? current.category : defaultCategoryForKind(nextKind),
-              equipment: nextKind === 'habit' ? '' : current.equipment,
-              defaultType: nextDefaultType,
-              allowed: sanitizeAllowedTypes(nextKind, current.allowed, nextDefaultType),
-              target: allowedTypesForKind(nextKind).includes(current.defaultType) ? current.target : blank(nextDefaultType),
-              progressMetric: nextKind === 'habit' && current.progressMetric === 'weight' ? (nextDefaultType === 'duration' ? 'time' : 'count') : current.progressMetric,
-            }
-          })}>{TRACKABLE_KIND_LABEL[kind]}</button> })}</div></div>
+          <div><span className="fieldLabel">Type</span><div className="chips">{(['exercise', 'habit'] as const).map((kind) => { const on = exerciseForm.kind === kind; return <button key={kind} className={on ? 'pill active' : 'pill'} onClick={() => {
+            setLibraryFilter(kind)
+            setExerciseForm((current) => {
+              const nextKind = kind
+              const nextDefaultType = sanitizeExerciseDefaultType(nextKind, current.defaultType)
+              return {
+                ...current,
+                kind: nextKind,
+                category: current.kind === nextKind ? current.category : defaultCategoryForKind(nextKind),
+                equipment: nextKind === 'habit' ? '' : current.equipment,
+                defaultType: nextDefaultType,
+                allowed: sanitizeAllowedTypes(nextKind, current.allowed, nextDefaultType),
+                target: allowedTypesForKind(nextKind).includes(current.defaultType) ? current.target : blank(nextDefaultType),
+                progressMetric: nextKind === 'habit' && current.progressMetric === 'weight' ? (nextDefaultType === 'duration' ? 'time' : 'count') : current.progressMetric,
+              }
+            })
+          }}>{TRACKABLE_KIND_LABEL[kind]}</button> })}</div></div>
           <label className="field"><span>Name</span><input value={exerciseForm.name} onChange={(e) => setExerciseForm((x) => ({ ...x, name: e.target.value }))} /></label>
           <div className="split">
             <label className="field"><span>Category</span><select value={exerciseForm.category} onChange={(e) => setExerciseForm((x) => ({ ...x, category: e.target.value }))}>{Array.from(new Set([...(exerciseForm.kind === 'habit' ? HABIT_CATEGORY_OPTIONS : EXERCISE_CATEGORY_OPTIONS), ...state.exercises.filter((ex) => ex.kind === exerciseForm.kind).map((ex) => ex.category), exerciseForm.category])).filter(Boolean).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>

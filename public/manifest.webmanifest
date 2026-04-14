@@ -1,0 +1,16 @@
+{
+  "name": "Discipline+",
+  "short_name": "Discipline+",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#15161b",
+  "theme_color": "#f27a17",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
