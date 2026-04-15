@@ -1246,6 +1246,7 @@ export default function App() {
   const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string; persistMode?: 'queued' | 'immediate' }) => {
     const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
     scheduleRevisionRef.current += 1
+    localScheduleRef.current = { schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }
     setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
     if (options?.selectedDate) {
       setSelected(options.selectedDate)
@@ -1773,17 +1774,20 @@ export default function App() {
     }
   }
 
-  const toggleDone = (date: string, item: Item) => {
+  const toggleDone = async (date: string, item: Item) => {
     const nextDone = !item.done
     const exercise = exById[item.exerciseId]
     const progressMetric = exercise ? effectiveProgressMetric(exercise, item.type) : 'count'
     const priorRows = derivedHistory
       .filter((h) => h.exerciseId === item.exerciseId && h.done && h.sourceItemId !== item.id)
       .sort((a, b) => b.date.localeCompare(a.date))
-    const nextItem = { ...item, done: nextDone }
-    const nextSchedule = state.schedule.map((day0) => day0.date === date ? normalizeScheduleDay({ ...day0, items: day0.items.map((existing) => existing.id === item.id ? nextItem : existing) }) : day0)
-    const nextLogs = syncLog(state.logs, date, nextItem)
-    void commitScheduleState(nextSchedule, state.runs, nextLogs, { persistMode: 'immediate' })
+    const saved = await updateItemOnDate(
+      date,
+      item.id,
+      (current) => ({ ...current, done: !current.done }),
+      { persistMode: 'immediate' },
+    )
+    if (saved === false) return
 
     if (nextDone && exercise) {
       pushToast(`${exercise.name} complete.`)
