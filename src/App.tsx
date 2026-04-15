@@ -873,7 +873,7 @@ export default function App() {
     })
     return matchMap
   }, [sortedExercises])
-  const starterExercises = useMemo(() => catalogExercisesFromSlices(state.plans, state.runs, state.schedule, state.logs), [state.plans, state.runs, state.schedule, state.logs])
+  const starterExercises = useMemo(() => catalogExercisesFromSlices([], [], [], []), [])
   const dayByDate = useMemo(() => Object.fromEntries(state.schedule.map((x) => [x.date, x])), [state.schedule])
   const derivedHistory = useMemo(() => [...state.logs].sort((a, b) => a.date.localeCompare(b.date)), [state.logs])
   const progressExercises = useMemo(() => {
