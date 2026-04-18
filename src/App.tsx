@@ -798,6 +798,7 @@ export default function App() {
   const scheduleRevisionRef = useRef(0)
   const scheduleTouchHoldRef = useRef<number | null>(null)
   const scheduleTouchDragRef = useRef<ScheduleTouchDrag | null>(null)
+  const scheduleCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const suppressScheduleDayClickRef = useRef(false)
   useEffect(() => {
     if (hasSupabaseEnv) return
@@ -913,6 +914,39 @@ export default function App() {
   const listDays = showPastDays ? [...pastDays, ...futureDays] : futureDays
   const visibleDays = scheduleView === 'list' ? listDays.slice(0, visibleListCount) : sortedDays
   const pushToast = (message: string) => setToasts((current) => [...current, { id: id('toast'), message }])
+  const updateScheduleMoveTargetFromPoint = (clientY: number) => {
+    if (!scheduleTouchDragRef.current?.active) return
+    const cards = visibleDays
+      .map((day0) => {
+        const element = scheduleCardRefs.current[day0.date]
+        if (!element) return null
+        return { date: day0.date, rect: element.getBoundingClientRect() }
+      })
+      .filter((entry): entry is { date: string; rect: DOMRect } => !!entry)
+
+    if (!cards.length) return
+
+    const beforeFirst = cards[0]
+    if (clientY < beforeFirst.rect.top + (beforeFirst.rect.height / 2)) {
+      setScheduleMoveTarget({ date: beforeFirst.date, placement: 'before' })
+      return
+    }
+
+    for (const card of cards) {
+      const midpoint = card.rect.top + (card.rect.height / 2)
+      if (clientY < midpoint) {
+        setScheduleMoveTarget({ date: card.date, placement: 'before' })
+        return
+      }
+      if (clientY <= card.rect.bottom) {
+        setScheduleMoveTarget({ date: card.date, placement: 'after' })
+        return
+      }
+    }
+
+    const last = cards[cards.length - 1]
+    setScheduleMoveTarget({ date: last.date, placement: 'after' })
+  }
   const persistExercisesCollection = useCallback(async (nextExercises: Exercise[]) => {
     if (!supabase || !user) return true
 
@@ -1587,12 +1621,7 @@ export default function App() {
     }
     if (!scheduleTouchDragRef.current?.active) return
     event.preventDefault()
-    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-schedule-card-date]')
-    const hoveredDate = hovered?.dataset.scheduleCardDate
-    if (!hoveredDate) return
-    const rect = hovered.getBoundingClientRect()
-    const placement: 'before' | 'after' = event.clientY < rect.top + (rect.height / 2) ? 'before' : 'after'
-    setScheduleMoveTarget({ date: hoveredDate, placement })
+    updateScheduleMoveTargetFromPoint(event.clientY)
   }
   const finishScheduleDayPointer = async (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -2385,6 +2414,7 @@ export default function App() {
               <div className={beforeTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
               <div
                 data-schedule-card-date={x.date}
+                ref={(node) => { scheduleCardRefs.current[x.date] = node }}
                 className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : '', shiftUp ? 'agendaShiftUp' : '', shiftDown ? 'agendaShiftDown' : ''].filter(Boolean).join(' ')}
                 onClick={() => {
                   if (draggedScheduleDayDate) return
