@@ -273,14 +273,21 @@
 }
 
 .scheduleCalendarPanel {
-  order: 1;
+  order: 2;
   min-height: 100%;
 }
 
 .scheduleDetailPanel {
-  order: 2;
-  position: sticky;
-  top: 14px;
+  order: 1;
+}
+
+.scheduleGrid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.scheduleGrid .scheduleDetailPanel,
+.scheduleGrid .scheduleCalendarPanel {
+  position: static;
 }
 
 .row,
@@ -397,8 +404,14 @@
   min-height: 120px;
 }
 
+.shortTextarea {
+  min-height: 60px !important;
+}
+
 .addExerciseField {
-  gap: 0;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
 }
 
 .inline {
@@ -669,6 +682,16 @@
   align-items: stretch;
   border-radius: 20px;
   min-height: 88px;
+  touch-action: pan-y;
+}
+
+.draggingAgendaItem {
+  opacity: 0.58;
+}
+
+.agendaDropTarget {
+  border-color: rgba(243, 107, 0, 0.72);
+  box-shadow: 0 0 0 2px rgba(243, 107, 0, 0.2);
 }
 
 .agendaDateRow {
@@ -1242,11 +1265,11 @@ textarea:focus-visible {
   }
 
   .scheduleCalendarPanel {
-    order: 1;
+    order: 2;
   }
 
   .scheduleDetailPanel {
-    order: 2;
+    order: 1;
   }
 
   .detailCompactRow {

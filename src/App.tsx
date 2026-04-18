@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
 import * as XLSX from 'xlsx'
 import './App.css'
@@ -30,6 +30,7 @@ type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: s
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
 type ImportedPlanAnalysis = { summary: string; warnings: string[]; items: ImportedAnalysisItem[]; days: ImportedAnalysisDay[] }
 type ExerciseEditorMode = 'existing' | 'new'
+type ScheduleTouchDrag = { sourceDate: string; active: boolean }
 type ConfirmState =
   | { kind: 'delete-run'; runId: string; title: string; body: string }
   | { kind: 'delete-plan'; planId: string; title: string; body: string }
@@ -92,6 +93,8 @@ const validProgressMetrics = new Set<PM>(['count', 'time', 'weight'])
 const validRefs = new Set<RM>(['last-result', 'personal-best'])
 const safeImportedType = (kind: TK, type: TT): TT => sanitizeExerciseDefaultType(kind, type)
 const allowedTypesFromImportedItems = (kind: TK, itemTypes: TT[], defaultType: TT) => sanitizeAllowedTypes(kind, itemTypes.map((type) => safeImportedType(kind, type)), defaultType)
+const parseNumberInput = (value: string) => value.trim() === '' ? undefined : Number(value)
+const numberInputValue = (value?: number) => value ?? ''
 const targetForType = (type: TT, target: Target): Target => {
   if (type === 'count') return { count: Math.max(1, Number(target.count ?? 1)) }
   if (type === 'sets') return { sets: Math.max(1, Number(target.sets ?? 3)), reps: Math.max(1, Number(target.reps ?? 10)) }
@@ -776,6 +779,8 @@ export default function App() {
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, boolean>>({})
   const [expandedPlanItems, setExpandedPlanItems] = useState<Record<string, boolean>>({})
   const [draggedPlanDayId, setDraggedPlanDayId] = useState<string | null>(null)
+  const [draggedScheduleDayDate, setDraggedScheduleDayDate] = useState<string | null>(null)
+  const [scheduleDropTargetDate, setScheduleDropTargetDate] = useState<string | null>(null)
   const [applyPlanId, setApplyPlanId] = useState<string | null>(null)
   const [applyStartDate, setApplyStartDate] = useState(today)
   const [keepCompletedPlanDays, setKeepCompletedPlanDays] = useState(true)
@@ -790,6 +795,9 @@ export default function App() {
   const authUserRef = useRef<string | null>(null)
   const scheduleSaveTimerRef = useRef<number | null>(null)
   const scheduleRevisionRef = useRef(0)
+  const scheduleTouchHoldRef = useRef<number | null>(null)
+  const scheduleTouchDragRef = useRef<ScheduleTouchDrag | null>(null)
+  const suppressScheduleDayClickRef = useRef(false)
   useEffect(() => {
     if (hasSupabaseEnv) return
     localStorage.setItem(KEY, JSON.stringify(state))
@@ -896,10 +904,7 @@ export default function App() {
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
-  const todayDay = today ? normalizeScheduleDay(dayByDate[today] ?? { date: today, notes: '', rest: true, skipped: false, items: [] }) : undefined
-  const todayItems = todayDay?.items ?? []
   const selectedDayPlanLabel = scheduledPlanLabel(day, state.runs, state.plans)
-  const todayPlanLabel = todayDay ? scheduledPlanLabel(todayDay, state.runs, state.plans) : ''
   const monthDays = useMemo(() => monthGrid(month), [month])
   const sortedDays = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
   const futureDays = sortedDays.filter((day0) => day0.date >= today)
@@ -1378,7 +1383,7 @@ export default function App() {
     return () => {
       active = false
     }
-  }, [user, state.exercises.length, persistPlans])
+  }, [user, state.exercises.length, persistPlans, selectedPlanId])
   useEffect(() => {
     if (!supabase || !user || state.exercises.length === 0) return
 
@@ -1504,6 +1509,77 @@ export default function App() {
     const nextSchedule = state.schedule.map((day0) => day0.date === selected ? normalizeScheduleDay({ ...day0, items: day0.items.filter((item) => item.id !== itemId) }) : day0)
     const nextLogs = state.logs.filter((entry) => entry.sourceItemId !== itemId)
     await commitScheduleState(nextSchedule, state.runs, nextLogs)
+  }
+  const swapScheduleDays = async (sourceDate: string, targetDate: string) => {
+    if (sourceDate === targetDate) return
+    const sourceDay = dayByDate[sourceDate]
+    const targetDay = dayByDate[targetDate]
+    if (!sourceDay || !targetDay) return
+
+    const sourceItemIds = new Set(sourceDay.items.map((item) => item.id))
+    const targetItemIds = new Set(targetDay.items.map((item) => item.id))
+    const nextSchedule = state.schedule.map((entry) => {
+      if (entry.date === sourceDate) return normalizeScheduleDay({ ...targetDay, date: sourceDate })
+      if (entry.date === targetDate) return normalizeScheduleDay({ ...sourceDay, date: targetDate })
+      return entry
+    })
+    const nextLogs = state.logs.map((entry) => {
+      if (!entry.sourceItemId) return entry
+      if (sourceItemIds.has(entry.sourceItemId)) return { ...entry, date: targetDate }
+      if (targetItemIds.has(entry.sourceItemId)) return { ...entry, date: sourceDate }
+      return entry
+    })
+
+    await commitScheduleState(nextSchedule, state.runs, nextLogs, { selectedDate: targetDate, persistMode: 'immediate' })
+  }
+  const clearScheduleDragState = () => {
+    if (scheduleTouchHoldRef.current) {
+      window.clearTimeout(scheduleTouchHoldRef.current)
+      scheduleTouchHoldRef.current = null
+    }
+    scheduleTouchDragRef.current = null
+    setDraggedScheduleDayDate(null)
+    setScheduleDropTargetDate(null)
+  }
+  const handleScheduleDayPointerDown = (date: string, pointerType: string) => {
+    if (pointerType === 'mouse') return
+    if (scheduleTouchHoldRef.current) {
+      window.clearTimeout(scheduleTouchHoldRef.current)
+    }
+    scheduleTouchDragRef.current = { sourceDate: date, active: false }
+    scheduleTouchHoldRef.current = window.setTimeout(() => {
+      scheduleTouchDragRef.current = { sourceDate: date, active: true }
+      setDraggedScheduleDayDate(date)
+      setScheduleDropTargetDate(date)
+      suppressScheduleDayClickRef.current = true
+    }, 260)
+  }
+  const handleScheduleDayPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const activeDrag = scheduleTouchDragRef.current
+    if (!activeDrag?.active) return
+    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-schedule-date]')
+    const hoveredDate = hovered?.dataset.scheduleDate
+    if (hoveredDate) {
+      setScheduleDropTargetDate(hoveredDate)
+    }
+  }
+  const finishScheduleDayPointer = async () => {
+    if (scheduleTouchHoldRef.current) {
+      window.clearTimeout(scheduleTouchHoldRef.current)
+      scheduleTouchHoldRef.current = null
+    }
+    const activeDrag = scheduleTouchDragRef.current
+    if (!activeDrag?.active) {
+      scheduleTouchDragRef.current = null
+      return
+    }
+
+    const sourceDate = activeDrag.sourceDate
+    const targetDate = scheduleDropTargetDate
+    clearScheduleDragState()
+    if (targetDate && targetDate !== sourceDate) {
+      await swapScheduleDays(sourceDate, targetDate)
+    }
   }
   const beginLogEdit = (log: Log) => {
     const exercise = exById[log.exerciseId]
@@ -1859,7 +1935,7 @@ export default function App() {
     )
   }
 
-  const skipPlanDay = async () => upsertDay(selected, (d0) => ({ ...d0, skipped: true }))
+  const toggleSkippedDay = async () => upsertDay(selected, (d0) => ({ ...d0, skipped: !d0.skipped }))
 
   const addPlanDayAt = async (index: number) => {
     if (!plan) return
@@ -2160,24 +2236,10 @@ export default function App() {
         </nav>
       </header>
 
-      {tab === 'schedule' && <main className="grid">
+      {tab === 'schedule' && <main className="grid scheduleGrid">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
             <div className="dayDetailHeader"><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}</h2>{selectedDayPlanLabel && <p className="dayDetailMeta">{selectedDayPlanLabel}</p>}</div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
-          <label className="field addExerciseField">
-            <select
-              aria-label="Select exercise or habit to add"
-              defaultValue=""
-              onChange={(event) => {
-                if (!event.target.value) return
-                void addExerciseToDay(event.target.value, selected)
-                event.target.value = ''
-              }}
-            >
-              <option value="">Select exercise or habit to add...</option>
-              {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.kind === 'habit' ? ' (Habit)' : ''}</option>)}
-            </select>
-          </label>
           {!day.rest && <>
             <div className="stack">{day.items.length === 0 && <div className="empty">No items yet.</div>}{day.items.map((item) => {
               const ex = exById[item.exerciseId]; if (!ex) return null
@@ -2232,37 +2294,27 @@ export default function App() {
                 </>}
               </article>
             })}</div>
-            <label className="field"><span>Day notes</span><textarea rows={3} value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
-            {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={skipPlanDay}>Skip day</button><div className="inline compactInline"><input type="number" min={1} max={99} value={shift} onChange={(e) => setShift(Number(e.target.value))} /><button className="pill" onClick={shiftPlan}>Push forward</button></div></div>}
           </>}
-          {day.rest && <label className="field"><span>Day notes</span><textarea rows={3} value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>}
-          {day.rest && day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={skipPlanDay}>Skip day</button><div className="inline compactInline"><input type="number" min={1} max={99} value={shift} onChange={(e) => setShift(Number(e.target.value))} /><button className="pill" onClick={shiftPlan}>Push forward</button></div></div>}
+          <label className="field addExerciseField">
+            <span>Add to this day</span>
+            <select
+              aria-label="Select exercise or habit to add"
+              defaultValue=""
+              onChange={(event) => {
+                if (!event.target.value) return
+                void addExerciseToDay(event.target.value, selected)
+                event.target.value = ''
+              }}
+            >
+              <option value="">Select exercise or habit to add...</option>
+              {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.kind === 'habit' ? ' (Habit)' : ''}</option>)}
+            </select>
+          </label>
+          <label className="field"><span>Day notes</span><textarea className="shortTextarea" rows={2} value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
+          {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={toggleSkippedDay}>{day.skipped ? 'Unskip day' : 'Skip day'}</button><div className="inline compactInline"><input type="number" min={1} max={99} value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value) ?? 1)} /><button className="pill" onClick={shiftPlan}>Push forward</button></div></div>}
         </section>
 
         <section className="panel scheduleCalendarPanel">
-          <div className="todaySummary">
-            <button className="todaySummaryButton" onClick={() => focusDay(today, true)}>
-              <div className="todaySummaryHeading">
-                <p className="eyebrow">Today</p>
-                <h2>{fmtDay(today)}</h2>
-                {todayPlanLabel && <p className="dayDetailMeta">{todayPlanLabel}</p>}
-              </div>
-            </button>
-            <div className="todayList">
-              {todayItems.length === 0 && <p className="mutedCopy">No exercises or habits scheduled for today.</p>}
-              {todayItems.map((item) => {
-                const ex = exById[item.exerciseId]
-                if (!ex) return null
-                return <div key={item.id} className={item.done ? 'todayEntry doneEntry todayRow' : 'todayEntry todayRow'}>
-                  <button className={['ring', ex.kind === 'habit' ? 'habitRing' : '', item.done ? 'done' : ''].filter(Boolean).join(' ')} onClick={() => toggleDone(today, item)} aria-label={`Mark ${ex.name} complete from today`}><span /></button>
-                  <button className="todayOpenButton" onClick={() => focusDay(today, true)}>
-                    <span>{item.done ? `Completed - ${ex.name}` : ex.name}{ex.kind === 'habit' ? ' (Habit)' : ''}</span>
-                    <strong>{compact(item.type, item.target)}</strong>
-                  </button>
-                </div>
-              })}
-            </div>
-          </div>
           <div className="row">
             <div><p className="eyebrow">Calendar</p></div>
             <div className="nav scheduleToggle">{(['calendar', 'list'] as const).map((x) => <button key={x} className={scheduleView === x ? 'pill active' : 'pill'} onClick={() => { setScheduleView(x); if (x === 'list') setVisibleListCount(5) }}>{x === 'calendar' ? 'Month' : 'List'}</button>)}</div>
@@ -2283,7 +2335,41 @@ export default function App() {
             const isComplete = !x.rest && x.items.length > 0 && x.items.every((i) => i.done)
             const isRest = x.items.length === 0 || x.rest
             const planLabel = scheduledPlanLabel(x, state.runs, state.plans)
-            return <button key={x.date} className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : ''].filter(Boolean).join(' ')} onClick={() => focusDay(x.date, true)}>
+            const isDragging = draggedScheduleDayDate === x.date
+            const isDropTarget = scheduleDropTargetDate === x.date && draggedScheduleDayDate !== x.date
+            return <button
+              key={x.date}
+              data-schedule-date={x.date}
+              draggable
+              className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : '', isDropTarget ? 'agendaDropTarget' : ''].filter(Boolean).join(' ')}
+              onClick={() => {
+                if (suppressScheduleDayClickRef.current) {
+                  suppressScheduleDayClickRef.current = false
+                  return
+                }
+                focusDay(x.date, true)
+              }}
+              onDragStart={() => {
+                setDraggedScheduleDayDate(x.date)
+                setScheduleDropTargetDate(x.date)
+              }}
+              onDragOver={(event) => {
+                event.preventDefault()
+                if (draggedScheduleDayDate) {
+                  setScheduleDropTargetDate(x.date)
+                }
+              }}
+              onDrop={() => {
+                if (!draggedScheduleDayDate || draggedScheduleDayDate === x.date) return
+                void swapScheduleDays(draggedScheduleDayDate, x.date)
+                clearScheduleDragState()
+              }}
+              onDragEnd={() => clearScheduleDragState()}
+              onPointerDown={(event) => handleScheduleDayPointerDown(x.date, event.pointerType)}
+              onPointerMove={handleScheduleDayPointerMove}
+              onPointerUp={() => { void finishScheduleDayPointer() }}
+              onPointerCancel={() => clearScheduleDragState()}
+            >
             <div className="agendaDateRow">
               <strong>{fmtDay(x.date)}{planLabel && <span className="inlineDateMeta"> | {planLabel}</span>}</strong>
               <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${x.items.filter((i) => i.done).length}/${x.items.length}`}</span>
@@ -2624,8 +2710,8 @@ export default function App() {
                 </div>
                 {isEditing && <div className="stack compactStack">
                   {entryMetric === 'time' && <label className="field"><span>Time logged</span><input placeholder="mm:ss or minutes" value={progressEdit.timeText ?? ''} onChange={(e) => setProgressEdit((current) => ({ ...current, timeText: e.target.value, seconds: parseSecs(e.target.value) }))} onBlur={() => setProgressEdit((current) => ({ ...current, timeText: current.seconds !== undefined ? fmtSecs(current.seconds) : current.timeText }))} /></label>}
-                  {entryMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="number" min={0} value={progressEdit.weight ?? 0} onChange={(e) => setProgressEdit((current) => ({ ...current, weight: Number(e.target.value) }))} /></label>}
-                  {entryMetric === 'count' && <label className="field compactMetricField"><span>Count logged</span><input type="number" min={0} value={progressEdit.count ?? 0} onChange={(e) => setProgressEdit((current) => ({ ...current, count: Number(e.target.value) }))} /></label>}
+                  {entryMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="number" min={0} value={numberInputValue(progressEdit.weight)} onChange={(e) => setProgressEdit((current) => ({ ...current, weight: parseNumberInput(e.target.value) }))} /></label>}
+                  {entryMetric === 'count' && <label className="field compactMetricField"><span>Count logged</span><input type="number" min={0} value={numberInputValue(progressEdit.count)} onChange={(e) => setProgressEdit((current) => ({ ...current, count: parseNumberInput(e.target.value) }))} /></label>}
                   <label className="field"><span>Note</span><input value={progressEdit.note ?? ''} onChange={(e) => setProgressEdit((current) => ({ ...current, note: e.target.value }))} placeholder="Optional note" /></label>
                   <div className="nav">
                     <button className="primary" onClick={saveLogEdit}>Save log</button>
@@ -2720,29 +2806,29 @@ export default function App() {
 
 function TargetEditor({ type, target, onChange, actions, layout = 'default' }: { type: TT; target: Target; onChange: (t: Target) => void; actions?: ReactNode; layout?: 'default' | 'detail' }) {
   if (type === 'count') {
-    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Target count</span><input type="number" min={1} value={target.count ?? 0} onChange={(e) => onChange({ count: Number(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetRow"><label className="field grow"><span>Target count</span><input type="number" min={1} value={target.count ?? 0} onChange={(e) => onChange({ count: Number(e.target.value) })} /></label>{actions}</div>
+    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Target count</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
+    return <div className="targetRow"><label className="field grow"><span>Target count</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
   }
   if (type === 'sets') {
-    if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={target.sets ?? 0} onChange={(e) => onChange({ ...target, sets: Number(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={target.reps ?? 0} onChange={(e) => onChange({ ...target, reps: Number(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetInline"><div className="split compactSplit"><label className="field"><span>Sets</span><input type="number" min={1} value={target.sets ?? 0} onChange={(e) => onChange({ ...target, sets: Number(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={target.reps ?? 0} onChange={(e) => onChange({ ...target, reps: Number(e.target.value) })} /></label></div>{actions}</div>
+    if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label>{actions}</div>
+    return <div className="targetInline"><div className="split compactSplit"><label className="field"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label></div>{actions}</div>
   }
   if (type === 'duration') {
-    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Seconds</span><input type="number" min={10} value={target.seconds ?? 0} onChange={(e) => onChange({ seconds: Number(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetRow"><label className="field grow"><span>Target duration in seconds</span><input type="number" min={10} value={target.seconds ?? 0} onChange={(e) => onChange({ seconds: Number(e.target.value) })} /></label>{actions}</div>
+    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Seconds</span><input type="number" min={10} value={numberInputValue(target.seconds)} onChange={(e) => onChange({ seconds: parseNumberInput(e.target.value) })} /></label>{actions}</div>
+    return <div className="targetRow"><label className="field grow"><span>Target duration in seconds</span><input type="number" min={10} value={numberInputValue(target.seconds)} onChange={(e) => onChange({ seconds: parseNumberInput(e.target.value) })} /></label>{actions}</div>
   }
   if (type === 'distance') {
     if (layout === 'detail') {
-      return <div className="targetInline"><div className="detailDistanceFields"><label className="field compactMetricField compactControl"><span>Distance</span><input type="number" min={0} step="0.1" value={target.distance ?? 0} onChange={(e) => onChange({ ...target, distance: Number(e.target.value) })} /></label><label className="field compactField compactControl"><span>Unit</span><select value={target.unit ?? 'mi'} onChange={(e) => onChange({ ...target, unit: e.target.value as 'mi' | 'km' })}><option value="mi">Miles</option><option value="km">Kilometers</option></select></label></div>{actions}</div>
+      return <div className="targetInline"><div className="detailDistanceFields"><label className="field compactMetricField compactControl"><span>Distance</span><input type="number" min={0} step="0.1" value={numberInputValue(target.distance)} onChange={(e) => onChange({ ...target, distance: parseNumberInput(e.target.value) })} /></label><label className="field compactField compactControl"><span>Unit</span><select value={target.unit ?? 'mi'} onChange={(e) => onChange({ ...target, unit: e.target.value as 'mi' | 'km' })}><option value="mi">Miles</option><option value="km">Kilometers</option></select></label></div>{actions}</div>
     }
-    return <div className="targetInline"><div className="split compactSplit"><label className="field"><span>Distance</span><input type="number" min={0} step="0.1" value={target.distance ?? 0} onChange={(e) => onChange({ ...target, distance: Number(e.target.value) })} /></label><label className="field compactField"><span>Unit</span><select value={target.unit ?? 'mi'} onChange={(e) => onChange({ ...target, unit: e.target.value as 'mi' | 'km' })}><option value="mi">Miles</option><option value="km">Kilometers</option></select></label></div>{actions}</div>
+    return <div className="targetInline"><div className="split compactSplit"><label className="field"><span>Distance</span><input type="number" min={0} step="0.1" value={numberInputValue(target.distance)} onChange={(e) => onChange({ ...target, distance: parseNumberInput(e.target.value) })} /></label><label className="field compactField"><span>Unit</span><select value={target.unit ?? 'mi'} onChange={(e) => onChange({ ...target, unit: e.target.value as 'mi' | 'km' })}><option value="mi">Miles</option><option value="km">Kilometers</option></select></label></div>{actions}</div>
   }
   if (type === 'for-time') {
-    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Fixed reps</span><input type="number" min={1} value={target.count ?? 0} onChange={(e) => onChange({ count: Number(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetRow"><label className="field grow"><span>Fixed reps</span><input type="number" min={1} value={target.count ?? 0} onChange={(e) => onChange({ count: Number(e.target.value) })} /></label>{actions}</div>
+    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Fixed reps</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
+    return <div className="targetRow"><label className="field grow"><span>Fixed reps</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
   }
-  if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={target.sets ?? 0} onChange={(e) => onChange({ ...target, sets: Number(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={target.reps ?? 0} onChange={(e) => onChange({ ...target, reps: Number(e.target.value) })} /></label><label className="field microField compactControl"><span>Weight</span><input type="number" min={0} value={target.weight ?? 0} onChange={(e) => onChange({ ...target, weight: Number(e.target.value) })} /></label>{actions}</div>
-  return <div className="targetInline"><div className="split threeUp"><label className="field"><span>Sets</span><input type="number" min={1} value={target.sets ?? 0} onChange={(e) => onChange({ ...target, sets: Number(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={target.reps ?? 0} onChange={(e) => onChange({ ...target, reps: Number(e.target.value) })} /></label><label className="field"><span>Weight</span><input type="number" min={0} value={target.weight ?? 0} onChange={(e) => onChange({ ...target, weight: Number(e.target.value) })} /></label></div>{actions}</div>
+  if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Weight</span><input type="number" min={0} value={numberInputValue(target.weight)} onChange={(e) => onChange({ ...target, weight: parseNumberInput(e.target.value) })} /></label>{actions}</div>
+  return <div className="targetInline"><div className="split threeUp"><label className="field"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label><label className="field"><span>Weight</span><input type="number" min={0} value={numberInputValue(target.weight)} onChange={(e) => onChange({ ...target, weight: parseNumberInput(e.target.value) })} /></label></div>{actions}</div>
 }
 
 function TrashIcon() {

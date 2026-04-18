@@ -5,8 +5,6 @@ const corsHeaders = {
 
 type TrackableKind = 'exercise' | 'habit'
 type TargetType = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
-type ProgressMetric = 'count' | 'time' | 'weight'
-type ReferenceMode = 'last-result' | 'personal-best'
 
 type RequestBody = {
   fileName?: string
