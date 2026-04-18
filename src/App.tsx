@@ -30,7 +30,7 @@ type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: s
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
 type ImportedPlanAnalysis = { summary: string; warnings: string[]; items: ImportedAnalysisItem[]; days: ImportedAnalysisDay[] }
 type ExerciseEditorMode = 'existing' | 'new'
-type ScheduleTouchDrag = { sourceDate: string; active: boolean; pointerId?: number }
+type ScheduleTouchDrag = { sourceDate: string; active: boolean; pointerId?: number; startX: number; startY: number }
 type ScheduleMoveTarget = { date: string; placement: 'before' | 'after' }
 type ConfirmState =
   | { kind: 'delete-run'; runId: string; title: string; body: string }
@@ -1553,38 +1553,57 @@ export default function App() {
     setDraggedScheduleDayDate(null)
     setScheduleMoveTarget(null)
   }
+  const beginScheduleDrag = (date: string, pointerId: number, startX: number, startY: number) => {
+    scheduleTouchDragRef.current = { sourceDate: date, active: true, pointerId, startX, startY }
+    setDraggedScheduleDayDate(date)
+    setScheduleMoveTarget({ date, placement: 'before' })
+    suppressScheduleDayClickRef.current = true
+  }
   const handleScheduleDayPointerDown = (event: ReactPointerEvent<HTMLDivElement>, date: string) => {
-    if (event.pointerType === 'mouse') return
+    event.currentTarget.setPointerCapture(event.pointerId)
     if (scheduleTouchHoldRef.current) {
       window.clearTimeout(scheduleTouchHoldRef.current)
     }
-    scheduleTouchDragRef.current = { sourceDate: date, active: false, pointerId: event.pointerId }
-    scheduleTouchHoldRef.current = window.setTimeout(() => {
-      scheduleTouchDragRef.current = { sourceDate: date, active: true, pointerId: event.pointerId }
-      setDraggedScheduleDayDate(date)
-      suppressScheduleDayClickRef.current = true
-    }, 260)
+    scheduleTouchDragRef.current = { sourceDate: date, active: false, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
+    if (event.pointerType !== 'mouse') {
+      scheduleTouchHoldRef.current = window.setTimeout(() => {
+        beginScheduleDrag(date, event.pointerId, event.clientX, event.clientY)
+      }, 260)
+    }
   }
   const handleScheduleDayPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const activeDrag = scheduleTouchDragRef.current
-    if (!activeDrag?.active) return
+    if (!activeDrag || activeDrag.pointerId !== event.pointerId) return
+    const deltaX = event.clientX - activeDrag.startX
+    const deltaY = event.clientY - activeDrag.startY
+    const movedEnough = Math.abs(deltaX) > 6 || Math.abs(deltaY) > 6
+    if (!activeDrag.active) {
+      if (event.pointerType === 'mouse' && movedEnough) {
+        beginScheduleDrag(activeDrag.sourceDate, event.pointerId, activeDrag.startX, activeDrag.startY)
+      } else if (event.pointerType !== 'mouse' && movedEnough && scheduleTouchHoldRef.current) {
+        window.clearTimeout(scheduleTouchHoldRef.current)
+        scheduleTouchHoldRef.current = null
+      }
+    }
+    if (!scheduleTouchDragRef.current?.active) return
     event.preventDefault()
     const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-schedule-card-date]')
     const hoveredDate = hovered?.dataset.scheduleCardDate
     if (!hoveredDate) return
     const rect = hovered.getBoundingClientRect()
     const placement: 'before' | 'after' = event.clientY < rect.top + (rect.height / 2) ? 'before' : 'after'
-    if (hoveredDate !== activeDrag.sourceDate || placement === 'before') {
-      setScheduleMoveTarget({ date: hoveredDate, placement })
-    }
+    setScheduleMoveTarget({ date: hoveredDate, placement })
   }
-  const finishScheduleDayPointer = async () => {
+  const finishScheduleDayPointer = async (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
     if (scheduleTouchHoldRef.current) {
       window.clearTimeout(scheduleTouchHoldRef.current)
       scheduleTouchHoldRef.current = null
     }
     const activeDrag = scheduleTouchDragRef.current
-    if (!activeDrag?.active) {
+    if (!activeDrag || activeDrag.pointerId !== event.pointerId || !activeDrag.active) {
       scheduleTouchDragRef.current = null
       return
     }
@@ -2366,7 +2385,6 @@ export default function App() {
               <div className={beforeTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
               <div
                 data-schedule-card-date={x.date}
-                draggable
                 className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : '', shiftUp ? 'agendaShiftUp' : '', shiftDown ? 'agendaShiftDown' : ''].filter(Boolean).join(' ')}
                 onClick={() => {
                   if (draggedScheduleDayDate) return
@@ -2376,25 +2394,9 @@ export default function App() {
                   }
                   focusDay(x.date, true)
                 }}
-                onDragStart={() => {
-                  setDraggedScheduleDayDate(x.date)
-                  setScheduleMoveTarget({ date: x.date, placement: 'before' })
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault()
-                  const rect = event.currentTarget.getBoundingClientRect()
-                  const placement: 'before' | 'after' = event.clientY < rect.top + (rect.height / 2) ? 'before' : 'after'
-                  setScheduleMoveTarget({ date: x.date, placement })
-                }}
-                onDrop={() => {
-                  if (!draggedScheduleDayDate || !scheduleMoveTarget || draggedScheduleDayDate === x.date && scheduleMoveTarget.placement === 'before') return
-                  void moveScheduleDay(draggedScheduleDayDate, scheduleMoveTarget.date, scheduleMoveTarget.placement)
-                  clearScheduleDragState()
-                }}
-                onDragEnd={() => clearScheduleDragState()}
                 onPointerDown={(event) => handleScheduleDayPointerDown(event, x.date)}
                 onPointerMove={handleScheduleDayPointerMove}
-                onPointerUp={() => { void finishScheduleDayPointer() }}
+                onPointerUp={(event) => { void finishScheduleDayPointer(event) }}
                 onPointerCancel={() => clearScheduleDragState()}
               >
                 <div className="agendaDateRow">
