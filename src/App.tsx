@@ -30,7 +30,7 @@ type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: s
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
 type ImportedPlanAnalysis = { summary: string; warnings: string[]; items: ImportedAnalysisItem[]; days: ImportedAnalysisDay[] }
 type ExerciseEditorMode = 'existing' | 'new'
-type ScheduleTouchDrag = { sourceDate: string; active: boolean }
+type ScheduleTouchDrag = { sourceDate: string; active: boolean; pointerId?: number }
 type ScheduleMoveTarget = { date: string; placement: 'before' | 'after' }
 type ConfirmState =
   | { kind: 'delete-run'; runId: string; title: string; body: string }
@@ -1553,14 +1553,14 @@ export default function App() {
     setDraggedScheduleDayDate(null)
     setScheduleMoveTarget(null)
   }
-  const handleScheduleDayPointerDown = (date: string, pointerType: string) => {
-    if (pointerType === 'mouse') return
+  const handleScheduleDayPointerDown = (event: ReactPointerEvent<HTMLDivElement>, date: string) => {
+    if (event.pointerType === 'mouse') return
     if (scheduleTouchHoldRef.current) {
       window.clearTimeout(scheduleTouchHoldRef.current)
     }
-    scheduleTouchDragRef.current = { sourceDate: date, active: false }
+    scheduleTouchDragRef.current = { sourceDate: date, active: false, pointerId: event.pointerId }
     scheduleTouchHoldRef.current = window.setTimeout(() => {
-      scheduleTouchDragRef.current = { sourceDate: date, active: true }
+      scheduleTouchDragRef.current = { sourceDate: date, active: true, pointerId: event.pointerId }
       setDraggedScheduleDayDate(date)
       suppressScheduleDayClickRef.current = true
     }, 260)
@@ -1568,11 +1568,14 @@ export default function App() {
   const handleScheduleDayPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const activeDrag = scheduleTouchDragRef.current
     if (!activeDrag?.active) return
-    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-schedule-drop-date]')
-    const hoveredDate = hovered?.dataset.scheduleDropDate
-    const hoveredPlacement = hovered?.dataset.scheduleDropPlacement
-    if (hoveredDate && (hoveredPlacement === 'before' || hoveredPlacement === 'after')) {
-      setScheduleMoveTarget({ date: hoveredDate, placement: hoveredPlacement })
+    event.preventDefault()
+    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-schedule-card-date]')
+    const hoveredDate = hovered?.dataset.scheduleCardDate
+    if (!hoveredDate) return
+    const rect = hovered.getBoundingClientRect()
+    const placement: 'before' | 'after' = event.clientY < rect.top + (rect.height / 2) ? 'before' : 'after'
+    if (hoveredDate !== activeDrag.sourceDate || placement === 'before') {
+      setScheduleMoveTarget({ date: hoveredDate, placement })
     }
   }
   const finishScheduleDayPointer = async () => {
@@ -2328,10 +2331,7 @@ export default function App() {
 
         <section className="panel scheduleCalendarPanel">
           <div className="row">
-            <div>
-              <p className="eyebrow">Calendar</p>
-              {scheduleView === 'list' && <p className="mutedCopy scheduleListHint">Drag a day by its handle, or long-press on touch, then drop it before or after another day.</p>}
-            </div>
+            <div><p className="eyebrow">Calendar</p></div>
             <div className="nav scheduleToggle">{(['calendar', 'list'] as const).map((x) => <button key={x} className={scheduleView === x ? 'pill active' : 'pill'} onClick={() => { setScheduleView(x); if (x === 'list') setVisibleListCount(5) }}>{x === 'calendar' ? 'Month' : 'List'}</button>)}</div>
           </div>
           {scheduleView === 'calendar' ? <div className="calendarWrap">
@@ -2353,55 +2353,55 @@ export default function App() {
             const isDragging = draggedScheduleDayDate === x.date
             const beforeTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'before'
             const afterTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'after'
+            const sourceIndex = visibleDays.findIndex((day0) => day0.date === draggedScheduleDayDate)
+            const targetIndex = scheduleMoveTarget ? visibleDays.findIndex((day0) => day0.date === scheduleMoveTarget.date) : -1
+            const insertIndex = targetIndex < 0 ? -1 : targetIndex + (scheduleMoveTarget?.placement === 'after' ? 1 : 0)
+            const currentIndex = visibleDays.findIndex((day0) => day0.date === x.date)
+            const shiftUp = sourceIndex >= 0 && insertIndex > sourceIndex && currentIndex > sourceIndex && currentIndex < insertIndex
+            const shiftDown = sourceIndex >= 0 && insertIndex >= 0 && insertIndex <= sourceIndex && currentIndex >= insertIndex && currentIndex < sourceIndex
             return <div
               key={x.date}
               className="agendaItemShell"
-              onPointerMove={handleScheduleDayPointerMove}
-              onPointerUp={() => { void finishScheduleDayPointer() }}
-              onPointerCancel={() => clearScheduleDragState()}
             >
-              {draggedScheduleDayDate && draggedScheduleDayDate !== x.date && <div
-                data-schedule-drop-date={x.date}
-                data-schedule-drop-placement="before"
-                className={beforeTargetOn ? 'agendaDropZone activeDropZone' : 'agendaDropZone'}
-                onDragOver={(event) => {
-                  event.preventDefault()
+              <div className={beforeTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
+              <div
+                data-schedule-card-date={x.date}
+                draggable
+                className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : '', shiftUp ? 'agendaShiftUp' : '', shiftDown ? 'agendaShiftDown' : ''].filter(Boolean).join(' ')}
+                onClick={() => {
+                  if (draggedScheduleDayDate) return
+                  if (suppressScheduleDayClickRef.current) {
+                    suppressScheduleDayClickRef.current = false
+                    return
+                  }
+                  focusDay(x.date, true)
+                }}
+                onDragStart={() => {
+                  setDraggedScheduleDayDate(x.date)
                   setScheduleMoveTarget({ date: x.date, placement: 'before' })
                 }}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  const placement: 'before' | 'after' = event.clientY < rect.top + (rect.height / 2) ? 'before' : 'after'
+                  setScheduleMoveTarget({ date: x.date, placement })
+                }}
                 onDrop={() => {
-                  if (!draggedScheduleDayDate) return
-                  void moveScheduleDay(draggedScheduleDayDate, x.date, 'before')
+                  if (!draggedScheduleDayDate || !scheduleMoveTarget || draggedScheduleDayDate === x.date && scheduleMoveTarget.placement === 'before') return
+                  void moveScheduleDay(draggedScheduleDayDate, scheduleMoveTarget.date, scheduleMoveTarget.placement)
                   clearScheduleDragState()
                 }}
+                onDragEnd={() => clearScheduleDragState()}
+                onPointerDown={(event) => handleScheduleDayPointerDown(event, x.date)}
+                onPointerMove={handleScheduleDayPointerMove}
+                onPointerUp={() => { void finishScheduleDayPointer() }}
+                onPointerCancel={() => clearScheduleDragState()}
               >
-                <span>Drop before {fmtDay(x.date)}</span>
-              </div>}
-              <div className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : ''].filter(Boolean).join(' ')}>
                 <div className="agendaDateRow">
-                  <button className="agendaOpenButton" onClick={() => {
-                    if (suppressScheduleDayClickRef.current) {
-                      suppressScheduleDayClickRef.current = false
-                      return
-                    }
-                    focusDay(x.date, true)
-                  }}>
+                  <div className="agendaOpenButton">
                     <strong>{fmtDay(x.date)}{planLabel && <span className="inlineDateMeta"> | {planLabel}</span>}</strong>
                     <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${x.items.filter((i) => i.done).length}/${x.items.length}`}</span>
-                  </button>
-                  <button
-                    type="button"
-                    draggable
-                    aria-label={`Move ${fmtDay(x.date)}`}
-                    className={isDragging ? 'iconPill agendaDragHandle activeIconPill' : 'iconPill agendaDragHandle'}
-                    onDragStart={() => {
-                      setDraggedScheduleDayDate(x.date)
-                      setScheduleMoveTarget(null)
-                    }}
-                    onDragEnd={() => clearScheduleDragState()}
-                    onPointerDown={(event) => handleScheduleDayPointerDown(x.date, event.pointerType)}
-                  >
-                    Move
-                  </button>
+                  </div>
                 </div>
                 {isRest ? <p className="mutedCopy">- Rest day</p> : <div className="agendaBullets">
                   {x.items.map((item) => {
@@ -2411,22 +2411,7 @@ export default function App() {
                   })}
                 </div>}
               </div>
-              {draggedScheduleDayDate && draggedScheduleDayDate !== x.date && <div
-                data-schedule-drop-date={x.date}
-                data-schedule-drop-placement="after"
-                className={afterTargetOn ? 'agendaDropZone activeDropZone' : 'agendaDropZone'}
-                onDragOver={(event) => {
-                  event.preventDefault()
-                  setScheduleMoveTarget({ date: x.date, placement: 'after' })
-                }}
-                onDrop={() => {
-                  if (!draggedScheduleDayDate) return
-                  void moveScheduleDay(draggedScheduleDayDate, x.date, 'after')
-                  clearScheduleDragState()
-                }}
-              >
-                <span>Drop after {fmtDay(x.date)}</span>
-              </div>}
+              <div className={afterTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
             </div>
           })}</div>}
           {scheduleView === 'list' && <div className="nav loadMoreRow">
