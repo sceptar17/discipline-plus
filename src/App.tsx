@@ -31,6 +31,7 @@ type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: 
 type ImportedPlanAnalysis = { summary: string; warnings: string[]; items: ImportedAnalysisItem[]; days: ImportedAnalysisDay[] }
 type ExerciseEditorMode = 'existing' | 'new'
 type ScheduleTouchDrag = { sourceDate: string; active: boolean }
+type ScheduleMoveTarget = { date: string; placement: 'before' | 'after' }
 type ConfirmState =
   | { kind: 'delete-run'; runId: string; title: string; body: string }
   | { kind: 'delete-plan'; planId: string; title: string; body: string }
@@ -780,7 +781,7 @@ export default function App() {
   const [expandedPlanItems, setExpandedPlanItems] = useState<Record<string, boolean>>({})
   const [draggedPlanDayId, setDraggedPlanDayId] = useState<string | null>(null)
   const [draggedScheduleDayDate, setDraggedScheduleDayDate] = useState<string | null>(null)
-  const [scheduleDropTargetDate, setScheduleDropTargetDate] = useState<string | null>(null)
+  const [scheduleMoveTarget, setScheduleMoveTarget] = useState<ScheduleMoveTarget | null>(null)
   const [applyPlanId, setApplyPlanId] = useState<string | null>(null)
   const [applyStartDate, setApplyStartDate] = useState(today)
   const [keepCompletedPlanDays, setKeepCompletedPlanDays] = useState(true)
@@ -1510,27 +1511,38 @@ export default function App() {
     const nextLogs = state.logs.filter((entry) => entry.sourceItemId !== itemId)
     await commitScheduleState(nextSchedule, state.runs, nextLogs)
   }
-  const swapScheduleDays = async (sourceDate: string, targetDate: string) => {
+  const moveScheduleDay = async (sourceDate: string, targetDate: string, placement: 'before' | 'after') => {
     if (sourceDate === targetDate) return
-    const sourceDay = dayByDate[sourceDate]
-    const targetDay = dayByDate[targetDate]
-    if (!sourceDay || !targetDay) return
+    const ordered = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
+    const sourceIndex = ordered.findIndex((entry) => entry.date === sourceDate)
+    const targetIndex = ordered.findIndex((entry) => entry.date === targetDate)
+    if (sourceIndex < 0 || targetIndex < 0) return
 
-    const sourceItemIds = new Set(sourceDay.items.map((item) => item.id))
-    const targetItemIds = new Set(targetDay.items.map((item) => item.id))
-    const nextSchedule = state.schedule.map((entry) => {
-      if (entry.date === sourceDate) return normalizeScheduleDay({ ...targetDay, date: sourceDate })
-      if (entry.date === targetDate) return normalizeScheduleDay({ ...sourceDay, date: targetDate })
-      return entry
+    let insertIndex = targetIndex + (placement === 'after' ? 1 : 0)
+    const reordered = [...ordered]
+    const [movedDay] = reordered.splice(sourceIndex, 1)
+    if (!movedDay) return
+    if (sourceIndex < insertIndex) {
+      insertIndex -= 1
+    }
+    reordered.splice(insertIndex, 0, movedDay)
+
+    const orderedDates = ordered.map((entry) => entry.date)
+    const itemDateMap = new Map<string, string>()
+    const movedDayIndex = reordered.findIndex((entry) => entry === movedDay)
+    const nextSchedule = reordered.map((entry, index) => {
+      const nextDate = orderedDates[index]
+      entry.items.forEach((item) => itemDateMap.set(item.id, nextDate))
+      return normalizeScheduleDay({ ...entry, date: nextDate })
     })
     const nextLogs = state.logs.map((entry) => {
       if (!entry.sourceItemId) return entry
-      if (sourceItemIds.has(entry.sourceItemId)) return { ...entry, date: targetDate }
-      if (targetItemIds.has(entry.sourceItemId)) return { ...entry, date: sourceDate }
-      return entry
+      const nextDate = itemDateMap.get(entry.sourceItemId)
+      return nextDate ? { ...entry, date: nextDate } : entry
     })
+    const movedSelectedDate = sourceDate === selected && movedDayIndex >= 0 ? orderedDates[movedDayIndex] : selected
 
-    await commitScheduleState(nextSchedule, state.runs, nextLogs, { selectedDate: targetDate, persistMode: 'immediate' })
+    await commitScheduleState(nextSchedule, state.runs, nextLogs, { selectedDate: movedSelectedDate, persistMode: 'immediate' })
   }
   const clearScheduleDragState = () => {
     if (scheduleTouchHoldRef.current) {
@@ -1539,7 +1551,7 @@ export default function App() {
     }
     scheduleTouchDragRef.current = null
     setDraggedScheduleDayDate(null)
-    setScheduleDropTargetDate(null)
+    setScheduleMoveTarget(null)
   }
   const handleScheduleDayPointerDown = (date: string, pointerType: string) => {
     if (pointerType === 'mouse') return
@@ -1550,17 +1562,17 @@ export default function App() {
     scheduleTouchHoldRef.current = window.setTimeout(() => {
       scheduleTouchDragRef.current = { sourceDate: date, active: true }
       setDraggedScheduleDayDate(date)
-      setScheduleDropTargetDate(date)
       suppressScheduleDayClickRef.current = true
     }, 260)
   }
-  const handleScheduleDayPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const handleScheduleDayPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const activeDrag = scheduleTouchDragRef.current
     if (!activeDrag?.active) return
-    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-schedule-date]')
-    const hoveredDate = hovered?.dataset.scheduleDate
-    if (hoveredDate) {
-      setScheduleDropTargetDate(hoveredDate)
+    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-schedule-drop-date]')
+    const hoveredDate = hovered?.dataset.scheduleDropDate
+    const hoveredPlacement = hovered?.dataset.scheduleDropPlacement
+    if (hoveredDate && (hoveredPlacement === 'before' || hoveredPlacement === 'after')) {
+      setScheduleMoveTarget({ date: hoveredDate, placement: hoveredPlacement })
     }
   }
   const finishScheduleDayPointer = async () => {
@@ -1575,10 +1587,10 @@ export default function App() {
     }
 
     const sourceDate = activeDrag.sourceDate
-    const targetDate = scheduleDropTargetDate
+    const target = scheduleMoveTarget
     clearScheduleDragState()
-    if (targetDate && targetDate !== sourceDate) {
-      await swapScheduleDays(sourceDate, targetDate)
+    if (target && target.date !== sourceDate) {
+      await moveScheduleDay(sourceDate, target.date, target.placement)
     }
   }
   const beginLogEdit = (log: Log) => {
@@ -2316,7 +2328,10 @@ export default function App() {
 
         <section className="panel scheduleCalendarPanel">
           <div className="row">
-            <div><p className="eyebrow">Calendar</p></div>
+            <div>
+              <p className="eyebrow">Calendar</p>
+              {scheduleView === 'list' && <p className="mutedCopy scheduleListHint">Drag a day by its handle, or long-press on touch, then drop it before or after another day.</p>}
+            </div>
             <div className="nav scheduleToggle">{(['calendar', 'list'] as const).map((x) => <button key={x} className={scheduleView === x ? 'pill active' : 'pill'} onClick={() => { setScheduleView(x); if (x === 'list') setVisibleListCount(5) }}>{x === 'calendar' ? 'Month' : 'List'}</button>)}</div>
           </div>
           {scheduleView === 'calendar' ? <div className="calendarWrap">
@@ -2336,52 +2351,83 @@ export default function App() {
             const isRest = x.items.length === 0 || x.rest
             const planLabel = scheduledPlanLabel(x, state.runs, state.plans)
             const isDragging = draggedScheduleDayDate === x.date
-            const isDropTarget = scheduleDropTargetDate === x.date && draggedScheduleDayDate !== x.date
-            return <button
+            const beforeTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'before'
+            const afterTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'after'
+            return <div
               key={x.date}
-              data-schedule-date={x.date}
-              draggable
-              className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : '', isDropTarget ? 'agendaDropTarget' : ''].filter(Boolean).join(' ')}
-              onClick={() => {
-                if (suppressScheduleDayClickRef.current) {
-                  suppressScheduleDayClickRef.current = false
-                  return
-                }
-                focusDay(x.date, true)
-              }}
-              onDragStart={() => {
-                setDraggedScheduleDayDate(x.date)
-                setScheduleDropTargetDate(x.date)
-              }}
-              onDragOver={(event) => {
-                event.preventDefault()
-                if (draggedScheduleDayDate) {
-                  setScheduleDropTargetDate(x.date)
-                }
-              }}
-              onDrop={() => {
-                if (!draggedScheduleDayDate || draggedScheduleDayDate === x.date) return
-                void swapScheduleDays(draggedScheduleDayDate, x.date)
-                clearScheduleDragState()
-              }}
-              onDragEnd={() => clearScheduleDragState()}
-              onPointerDown={(event) => handleScheduleDayPointerDown(x.date, event.pointerType)}
+              className="agendaItemShell"
               onPointerMove={handleScheduleDayPointerMove}
               onPointerUp={() => { void finishScheduleDayPointer() }}
               onPointerCancel={() => clearScheduleDragState()}
             >
-            <div className="agendaDateRow">
-              <strong>{fmtDay(x.date)}{planLabel && <span className="inlineDateMeta"> | {planLabel}</span>}</strong>
-              <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${x.items.filter((i) => i.done).length}/${x.items.length}`}</span>
+              {draggedScheduleDayDate && draggedScheduleDayDate !== x.date && <div
+                data-schedule-drop-date={x.date}
+                data-schedule-drop-placement="before"
+                className={beforeTargetOn ? 'agendaDropZone activeDropZone' : 'agendaDropZone'}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setScheduleMoveTarget({ date: x.date, placement: 'before' })
+                }}
+                onDrop={() => {
+                  if (!draggedScheduleDayDate) return
+                  void moveScheduleDay(draggedScheduleDayDate, x.date, 'before')
+                  clearScheduleDragState()
+                }}
+              >
+                <span>Drop before {fmtDay(x.date)}</span>
+              </div>}
+              <div className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : ''].filter(Boolean).join(' ')}>
+                <div className="agendaDateRow">
+                  <button className="agendaOpenButton" onClick={() => {
+                    if (suppressScheduleDayClickRef.current) {
+                      suppressScheduleDayClickRef.current = false
+                      return
+                    }
+                    focusDay(x.date, true)
+                  }}>
+                    <strong>{fmtDay(x.date)}{planLabel && <span className="inlineDateMeta"> | {planLabel}</span>}</strong>
+                    <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${x.items.filter((i) => i.done).length}/${x.items.length}`}</span>
+                  </button>
+                  <button
+                    type="button"
+                    draggable
+                    aria-label={`Move ${fmtDay(x.date)}`}
+                    className={isDragging ? 'iconPill agendaDragHandle activeIconPill' : 'iconPill agendaDragHandle'}
+                    onDragStart={() => {
+                      setDraggedScheduleDayDate(x.date)
+                      setScheduleMoveTarget(null)
+                    }}
+                    onDragEnd={() => clearScheduleDragState()}
+                    onPointerDown={(event) => handleScheduleDayPointerDown(x.date, event.pointerType)}
+                  >
+                    Move
+                  </button>
+                </div>
+                {isRest ? <p className="mutedCopy">- Rest day</p> : <div className="agendaBullets">
+                  {x.items.map((item) => {
+                    const ex = exById[item.exerciseId]
+                    if (!ex) return null
+                    return <div key={item.id} className="agendaBullet">- {ex.name} | {sum(item.type, item.target)}</div>
+                  })}
+                </div>}
+              </div>
+              {draggedScheduleDayDate && draggedScheduleDayDate !== x.date && <div
+                data-schedule-drop-date={x.date}
+                data-schedule-drop-placement="after"
+                className={afterTargetOn ? 'agendaDropZone activeDropZone' : 'agendaDropZone'}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setScheduleMoveTarget({ date: x.date, placement: 'after' })
+                }}
+                onDrop={() => {
+                  if (!draggedScheduleDayDate) return
+                  void moveScheduleDay(draggedScheduleDayDate, x.date, 'after')
+                  clearScheduleDragState()
+                }}
+              >
+                <span>Drop after {fmtDay(x.date)}</span>
+              </div>}
             </div>
-            {isRest ? <p className="mutedCopy">- Rest day</p> : <div className="agendaBullets">
-              {x.items.map((item) => {
-                const ex = exById[item.exerciseId]
-                if (!ex) return null
-                return <div key={item.id} className="agendaBullet">- {ex.name} | {sum(item.type, item.target)}</div>
-              })}
-            </div>}
-          </button>
           })}</div>}
           {scheduleView === 'list' && <div className="nav loadMoreRow">
             {!showPastDays && pastDays.length > 0 && <button className="pill" onClick={() => { setShowPastDays(true); setVisibleListCount((current) => current + pastDays.length) }}>Load previous</button>}
