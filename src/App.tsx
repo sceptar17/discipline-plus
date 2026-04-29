@@ -760,7 +760,7 @@ export default function App() {
   const [scheduleView, setScheduleView] = useState<'calendar' | 'list'>('list')
   const [visibleListCount, setVisibleListCount] = useState(5)
   const [showPastDays, setShowPastDays] = useState(false)
-  const [shift, setShift] = useState(1)
+  const [shift, setShift] = useState<number | undefined>(1)
   const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
   const [exerciseEditorMode, setExerciseEditorMode] = useState<ExerciseEditorMode>(state.exercises[0] ? 'existing' : 'new')
   const [exerciseForm, setExerciseForm] = useState<ExerciseForm>(() => state.exercises[0] ? formFromExercise(state.exercises[0]) : emptyExerciseForm())
@@ -1594,13 +1594,19 @@ export default function App() {
     suppressScheduleDayClickRef.current = true
   }
   const handleScheduleDayPointerDown = (event: ReactPointerEvent<HTMLDivElement>, date: string) => {
-    event.currentTarget.setPointerCapture(event.pointerId)
+    const cardElement = event.currentTarget
+    if (event.pointerType === 'mouse') {
+      cardElement.setPointerCapture(event.pointerId)
+    }
     if (scheduleTouchHoldRef.current) {
       window.clearTimeout(scheduleTouchHoldRef.current)
     }
     scheduleTouchDragRef.current = { sourceDate: date, active: false, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
     if (event.pointerType !== 'mouse') {
       scheduleTouchHoldRef.current = window.setTimeout(() => {
+        if (cardElement.isConnected) {
+          cardElement.setPointerCapture(event.pointerId)
+        }
         beginScheduleDrag(date, event.pointerId, event.clientX, event.clientY)
       }, 260)
     }
@@ -1979,12 +1985,13 @@ export default function App() {
   }
 
   const shiftPlan = async () => {
-    if (!day.runId || shift < 1) return
-    const nextDate = add(selected, shift)
+    if (!day.runId || !shift || shift < 1) return
+    const shiftDays = Math.min(99, Math.floor(shift))
+    const nextDate = add(selected, shiftDays)
     const shiftedItems = new Map<string, string>()
     const nextSchedule = state.schedule.map((x) => {
       if (x.runId === day.runId && x.date >= selected) {
-        const shiftedDate = add(x.date, shift)
+        const shiftedDate = add(x.date, shiftDays)
         x.items.forEach((item) => shiftedItems.set(item.id, shiftedDate))
         return { ...x, date: shiftedDate }
       }
@@ -1992,7 +1999,7 @@ export default function App() {
     })
     await commitScheduleState(
       nextSchedule,
-      state.runs.map((r) => r.id === day.runId ? { ...r, startDate: r.startDate >= selected ? add(r.startDate, shift) : r.startDate } : r),
+      state.runs.map((r) => r.id === day.runId ? { ...r, startDate: r.startDate >= selected ? add(r.startDate, shiftDays) : r.startDate } : r),
       state.logs.map((entry) => entry.sourceItemId && shiftedItems.has(entry.sourceItemId) ? { ...entry, date: shiftedItems.get(entry.sourceItemId)! } : entry),
       { selectedDate: nextDate },
     )
@@ -2359,7 +2366,6 @@ export default function App() {
             })}</div>
           </>}
           <label className="field addExerciseField">
-            <span>Add to this day</span>
             <select
               aria-label="Select exercise or habit to add"
               defaultValue=""
@@ -2373,8 +2379,8 @@ export default function App() {
               {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.kind === 'habit' ? ' (Habit)' : ''}</option>)}
             </select>
           </label>
-          <label className="field"><span>Day notes</span><textarea className="shortTextarea" rows={2} value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
-          {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={toggleSkippedDay}>{day.skipped ? 'Unskip day' : 'Skip day'}</button><div className="inline compactInline"><input type="number" min={1} max={99} value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value) ?? 1)} /><button className="pill" onClick={shiftPlan}>Push forward</button></div></div>}
+          <label className="field"><textarea className="shortTextarea" rows={2} aria-label="Day notes" placeholder="Notes" value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
+          {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={toggleSkippedDay}>{day.skipped ? 'Unskip day' : 'Skip day'}</button><div className="inline compactInline"><input type="number" min={1} max={99} value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value))} aria-label="Days to push forward" /><button className="pill" onClick={shiftPlan} disabled={!shift || shift < 1}>Push forward</button></div></div>}
         </section>
 
         <section className="panel scheduleCalendarPanel">

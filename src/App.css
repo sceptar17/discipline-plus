@@ -682,7 +682,7 @@
   align-items: stretch;
   border-radius: 20px;
   min-height: 88px;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
   cursor: grab;
@@ -1050,15 +1050,16 @@
 }
 
 .ring {
-  inline-size: 36px;
-  block-size: 36px;
+  inline-size: 26px;
+  block-size: 26px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  padding: 4px;
+  padding: 3px;
   background: transparent;
-  border-width: 2px;
+  border-width: 1.5px;
   border-color: rgba(243, 107, 0, 0.7);
+  flex: 0 0 auto;
 }
 
 .ring.habitRing {
@@ -1066,8 +1067,8 @@
 }
 
 .ring span {
-  inline-size: 18px;
-  block-size: 18px;
+  inline-size: 12px;
+  block-size: 12px;
   border-radius: 50%;
   background: transparent;
 }
