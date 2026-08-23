@@ -1422,7 +1422,7 @@ export default function App() {
 
       const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
       if (authUserRef.current !== ownerId) return
-      const activePlan = selectedPlanId ? remotePlans.find((plan0) => plan0.id === selectedPlanId) ?? null : null
+      const activePlan = selectedPlanId ? remotePlans.find((plan0) => plan0.id === selectedPlanId) ?? remotePlans[0] ?? null : remotePlans[0] ?? null
       setState((current) => ({ ...current, plans: remotePlans }))
       setSelectedPlanId(activePlan?.id ?? null)
       if (activePlan) {
