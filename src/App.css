@@ -1180,6 +1180,275 @@
   white-space: nowrap;
 }
 
+.workoutProgressCopy,
+.planFocusCopy {
+  color: var(--text-muted);
+}
+
+.workoutList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workoutItem {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+
+.workoutItemDone {
+  opacity: 0.72;
+}
+
+.workoutItemRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 70px;
+  padding: 10px 12px 10px 16px;
+}
+
+.workoutItemMain {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+
+.workoutItemHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.workoutItemHeading h3 {
+  margin: 0;
+}
+
+.workoutItemMeta {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.logButton {
+  min-width: 70px;
+  padding: 0.68rem 0.82rem;
+  border: 1px solid rgba(243, 107, 0, 0.55);
+  border-radius: 999px;
+  background: rgba(243, 107, 0, 0.13);
+  color: #ffb067;
+  font: inherit;
+  font-weight: 700;
+}
+
+.doneLogButton {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+.loggerPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.loggerHeading,
+.progressDetailHeader,
+.planOverviewHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.loggerHeading p {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.completeExerciseButton {
+  width: 100%;
+  min-height: 48px;
+}
+
+.textButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+}
+
+.dangerTextButton {
+  color: #ff9d85;
+}
+
+.secondaryTools {
+  color: var(--text-muted);
+}
+
+.secondaryTools > summary {
+  width: fit-content;
+  padding: 6px 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  list-style: none;
+}
+
+.secondaryTools > summary::-webkit-details-marker {
+  display: none;
+}
+
+.secondaryTools[open] > summary {
+  margin-bottom: 12px;
+  color: var(--text-strong);
+}
+
+.itemOptions,
+.dayOptions {
+  padding-top: 4px;
+}
+
+.dayOptions {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.targetEditRow {
+  padding-top: 4px;
+}
+
+.restState {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.restState p {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.restIcon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--accent-soft);
+  font-size: 1.35rem;
+}
+
+.scheduleCalendarPanel {
+  min-height: 0;
+}
+
+.scheduleOverviewHeader h3 {
+  margin-top: 4px;
+}
+
+.scheduleBrowser {
+  margin-top: 16px;
+}
+
+.compactMenu > summary {
+  padding: 0.62rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-strong);
+}
+
+.compactMenu[open] {
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.compactLibraryList {
+  gap: 6px;
+}
+
+.compactLibraryRow {
+  min-height: 56px;
+  padding: 10px 14px;
+  border-radius: 14px;
+}
+
+.compactEmpty {
+  padding: 14px;
+}
+
+.activePlanStatus {
+  padding: 0.38rem 0.7rem;
+  color: var(--accent-soft);
+}
+
+.planOverviewDays {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.planOverviewDay {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.planOverviewDay:last-child {
+  border-bottom: 0;
+}
+
+.planOverviewDay p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.planDayNumber {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(243, 107, 0, 0.11);
+  color: var(--accent-soft);
+  font-weight: 700;
+}
+
+.progressDetailPanel {
+  order: 1;
+}
+
+.progressPickerPanel {
+  order: 2;
+}
+
+.progressSelect {
+  width: min(280px, 42%);
+  flex: 0 0 auto;
+}
+
 button {
   cursor: pointer;
 }
@@ -1326,6 +1595,7 @@ textarea:focus-visible {
 
   .detailTargetFields {
     gap: 6px;
+    flex-wrap: wrap;
   }
 
   .microField {
@@ -1368,5 +1638,53 @@ textarea:focus-visible {
     height: 32px;
     min-width: 32px;
     min-height: 32px;
+  }
+
+  .progressPickerPanel {
+    display: none;
+  }
+
+  .progressDetailHeader,
+  .planOverviewHeader {
+    flex-direction: column;
+  }
+
+  .progressSelect {
+    width: 100%;
+  }
+
+  .workoutItemRow {
+    min-height: 64px;
+    padding-left: 14px;
+  }
+
+  .workoutItemMeta {
+    font-size: 0.84rem;
+  }
+
+  .logButton {
+    min-width: 64px;
+  }
+
+  .loggerPanel {
+    padding: 14px;
+  }
+
+  .targetEditRow,
+  .resultRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .targetEditRow > *,
+  .resultRow > * {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .restState {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 }

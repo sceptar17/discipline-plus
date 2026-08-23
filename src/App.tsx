@@ -66,7 +66,16 @@ const sum = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0} count` : t ==
 const totalCount = (target: Target) => target.count ?? ((target.sets ?? 0) * (target.reps ?? 0))
 const metric = (progressMetric: PM, entry: Pick<Log, 'target' | 'result'>) => progressMetric === 'count' ? entry.result.count ?? totalCount(entry.target) : progressMetric === 'time' ? entry.result.seconds ?? entry.target.seconds : entry.result.weight ?? entry.target.weight
 const durationShort = (seconds?: number) => seconds === undefined ? '0:00' : `${Math.floor(seconds / 60)}:${`${seconds % 60}`.padStart(2, '0')}`
-const compact = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0}` : t === 'sets' ? `${x.sets ?? 0}x${x.reps ?? 0}` : t === 'duration' ? durationShort(x.seconds) : t === 'distance' ? `${x.distance ?? 0} ${x.unit === 'km' ? 'km' : 'miles'}` : t === 'for-time' ? `${x.count ?? 0}` : `${x.sets ?? 0}x${x.reps ?? 0}`
+const workoutSummary = (t: TT, x: Target) => {
+  if (t === 'sets' || t === 'weighted') {
+    const volume = `${x.sets ?? 0} × ${x.reps ?? 0}`
+    return x.weight !== undefined ? `${volume} · ${x.weight} lb` : volume
+  }
+  if (t === 'count') return `${x.count ?? 0} reps`
+  if (t === 'duration') return durationShort(x.seconds)
+  if (t === 'distance') return `${x.distance ?? 0} ${x.unit ?? 'mi'}`
+  return `${x.count ?? 0} reps for time`
+}
 const kindOrder: Record<TK, number> = { exercise: 0, habit: 1 }
 const allowedTypesForKind = (kind: TK): TT[] => kind === 'habit' ? ['count', 'duration'] : (Object.keys(TT_LABEL) as TT[])
 const defaultCategoryForKind = (kind: TK) => kind === 'habit' ? HABIT_CATEGORY_OPTIONS[0] : EXERCISE_CATEGORY_OPTIONS[0]
@@ -758,6 +767,7 @@ export default function App() {
   const [selected, setSelected] = useState(today)
   const [month, setMonth] = useState(monthKey(today))
   const [scheduleView, setScheduleView] = useState<'calendar' | 'list'>('list')
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [visibleListCount, setVisibleListCount] = useState(5)
   const [showPastDays, setShowPastDays] = useState(false)
   const [shift, setShift] = useState<number | undefined>(1)
@@ -765,11 +775,13 @@ export default function App() {
   const [exerciseEditorMode, setExerciseEditorMode] = useState<ExerciseEditorMode>(state.exercises[0] ? 'existing' : 'new')
   const [exerciseForm, setExerciseForm] = useState<ExerciseForm>(() => state.exercises[0] ? formFromExercise(state.exercises[0]) : emptyExerciseForm())
   const [libraryFilter, setLibraryFilter] = useState<TK>('exercise')
+  const [libraryQuery, setLibraryQuery] = useState('')
   const [selectedProgressExerciseId, setSelectedProgressExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
   const [editingLogId, setEditingLogId] = useState<string | null>(null)
   const [progressEdit, setProgressEdit] = useState<Result>({})
   const [pendingImport, setPendingImport] = useState<LegacyState | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
+  const [planEditing, setPlanEditing] = useState(false)
   const [planForm, setPlanForm] = useState<PlanForm>(() => emptyPlanForm())
   const [importAnalysis, setImportAnalysis] = useState<ImportedPlanAnalysis | null>(null)
   const [importWorkbook, setImportWorkbook] = useState<WorkbookPreview | null>(null)
@@ -872,7 +884,10 @@ export default function App() {
   }, [])
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
   const sortedExercises = useMemo(() => [...state.exercises].sort(compareExercises), [state.exercises])
-  const filteredLibraryExercises = useMemo(() => sortedExercises.filter((exercise) => exercise.kind === libraryFilter), [libraryFilter, sortedExercises])
+  const filteredLibraryExercises = useMemo(() => {
+    const query = libraryQuery.trim().toLowerCase()
+    return sortedExercises.filter((exercise) => exercise.kind === libraryFilter && (!query || `${exercise.name} ${exercise.category} ${exercise.equipment}`.toLowerCase().includes(query)))
+  }, [libraryFilter, libraryQuery, sortedExercises])
   const catalogMatchesByNormalizedName = useMemo(() => {
     const matchMap = new Map<string, Exercise>()
     sortedExercises.forEach((exercise) => {
@@ -909,6 +924,8 @@ export default function App() {
   const selectedDayPlanLabel = scheduledPlanLabel(day, state.runs, state.plans)
   const monthDays = useMemo(() => monthGrid(month), [month])
   const sortedDays = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
+  const nextWorkoutDay = sortedDays.find((day0) => day0.date > selected && !day0.rest && day0.items.length > 0)
+  const activePlanIds = new Set(state.runs.map((run) => run.planId).filter((planId): planId is string => !!planId))
   const futureDays = sortedDays.filter((day0) => day0.date >= today)
   const pastDays = sortedDays.filter((day0) => day0.date < today).reverse()
   const listDays = showPastDays ? [...pastDays, ...futureDays] : futureDays
@@ -1660,7 +1677,7 @@ export default function App() {
     setEditingLogId(null)
     setProgressEdit({})
   }
-  const saveItemDraft = async (item: Item, exercise: Exercise) => {
+  const saveItemDraft = async (item: Item, exercise: Exercise, markComplete = false) => {
     const draft = itemDrafts[item.id] ?? makeItemDraft(item, exercise)
     const nextResult: Result = {}
     const parsedSeconds = parseSecs(draft.timeText)
@@ -1680,6 +1697,7 @@ export default function App() {
       type: draft.type,
       target: clone(draft.target),
       result: nextResult,
+      done: markComplete ? true : x.done,
     }), { persistMode: 'immediate' })
 
     if (saved !== false) {
@@ -1688,6 +1706,37 @@ export default function App() {
         delete next[item.id]
         return next
       })
+      setExpandedItems((current) => ({ ...current, [item.id]: false }))
+
+      if (markComplete && !item.done) {
+        const progressMetric = effectiveProgressMetric(exercise, draft.type)
+        const priorRows = derivedHistory
+          .filter((historyItem) => historyItem.exerciseId === item.exerciseId && historyItem.done && historyItem.sourceItemId !== item.id)
+        const candidate: Log = {
+          id: 'candidate',
+          exerciseId: item.exerciseId,
+          date: selected,
+          type: draft.type,
+          target: clone(draft.target),
+          result: {
+            ...nextResult,
+            count: progressMetric === 'count' ? (nextResult.count ?? totalCount(draft.target)) : nextResult.count,
+          },
+          done: true,
+        }
+        const bestBefore = bestProgressEntry(priorRows, exercise)
+        const candidateMetric = metric(progressMetric, candidate)
+        const bestMetric = bestBefore ? metric(progressMetric, bestBefore) : undefined
+        pushToast(`${exercise.name} complete.`)
+        if (candidateMetric !== undefined && (bestMetric === undefined || (progressMetric === 'time' ? candidateMetric < bestMetric : candidateMetric > bestMetric))) {
+          pushToast(`New PB for ${exercise.name}.`)
+        }
+        const currentDay = dayByDate[selected]
+        const doneCount = (currentDay?.items.filter((existing) => existing.done).length ?? 0) + 1
+        if ((currentDay?.items.length ?? 0) > 0 && doneCount === currentDay?.items.length) pushToast('Day complete. Keep it moving.')
+      } else if (markComplete) {
+        pushToast(`${exercise.name} result updated.`)
+      }
     }
   }
   function loadWorkspaceState(next: State) {
@@ -1919,58 +1968,6 @@ export default function App() {
     }
   }
 
-  const toggleDone = async (date: string, item: Item) => {
-    const nextDone = !item.done
-    const exercise = exById[item.exerciseId]
-    const progressMetric = exercise ? effectiveProgressMetric(exercise, item.type) : 'count'
-    const priorRows = derivedHistory
-      .filter((h) => h.exerciseId === item.exerciseId && h.done && h.sourceItemId !== item.id)
-      .sort((a, b) => b.date.localeCompare(a.date))
-    const saved = await updateItemOnDate(
-      date,
-      item.id,
-      (current) => ({ ...current, done: !current.done }),
-      { persistMode: 'immediate' },
-    )
-    if (saved === false) return
-
-    if (nextDone && exercise) {
-      pushToast(`${exercise.name} complete.`)
-      const candidate: Log = {
-        id: 'candidate',
-        exerciseId: item.exerciseId,
-        date,
-        type: item.type,
-        target: clone(item.target),
-        result: {
-          ...item.result,
-          count: progressMetric === 'count' ? (item.result.count ?? totalCount(item.target)) : item.result.count,
-        },
-        done: true,
-      }
-      const bestBefore = priorRows.reduce<Log | undefined>((acc, row) => {
-        if (!acc) return row
-        const a = metric(progressMetric, acc)
-        const b = metric(progressMetric, row)
-        if (b === undefined) return acc
-        if (a === undefined) return row
-        return progressMetric === 'time' ? (b < a ? row : acc) : (b > a ? row : acc)
-      }, undefined)
-      const candidateMetric = metric(progressMetric, candidate)
-      const bestMetric = bestBefore ? metric(progressMetric, bestBefore) : undefined
-      if (candidateMetric !== undefined && (bestMetric === undefined || (progressMetric === 'time' ? candidateMetric < bestMetric : candidateMetric > bestMetric))) {
-        pushToast(`New PB for ${exercise.name}.`)
-      }
-
-      const currentDay = dayByDate[date]
-      const doneCount = (currentDay?.items.filter((existing) => existing.done).length ?? 0) + (item.done ? 0 : 1)
-      const dayItemCount = currentDay?.items.length ?? 0
-      if (dayItemCount > 0 && doneCount === dayItemCount) {
-        pushToast('Day complete. Keep it moving.')
-      }
-    }
-  }
-
   const applyPlanById = async (planIdToApply: string, startDate: string) => {
     const targetPlan = state.plans.find((p) => p.id === planIdToApply)
     if (!targetPlan) return
@@ -2032,10 +2029,12 @@ export default function App() {
     if (!selectedPlanId || !plan) return
     const nextPlans = state.plans.map((p) => p.id === selectedPlanId ? { ...p, name: planForm.name.trim() || p.name, focus: planForm.focus } : p)
     await commitPlans(nextPlans, { selectedPlanId, changedPlanIds: [selectedPlanId] })
+    setPlanEditing(false)
   }
   const startNewPlan = async () => {
     const nextPlan: Plan = { id: id('plan'), name: 'New plan', focus: '', days: [] }
     await commitPlans([...state.plans, nextPlan], { selectedPlanId: nextPlan.id, changedPlanIds: [nextPlan.id] })
+    setPlanEditing(true)
     focusPlanEditor()
   }
   const selectPlan = (nextPlanId: string) => {
@@ -2043,6 +2042,7 @@ export default function App() {
     if (!nextPlan) return
     setSelectedPlanId(nextPlanId)
     setPlanForm(formFromPlan(nextPlan))
+    setPlanEditing(false)
     focusPlanEditor()
   }
   const deletePlan = async (planId: string) => {
@@ -2302,51 +2302,53 @@ export default function App() {
         </div>
 
         <nav className="topNav" aria-label="Primary navigation">
-          {(['schedule', 'exercises', 'plans', 'progress'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{{ schedule: 'Schedule', exercises: 'Library', plans: 'Plans', progress: 'Progress' }[x]}</button>)}
+          {(['schedule', 'progress', 'plans', 'exercises'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{{ schedule: 'Today', exercises: 'Library', plans: 'Plan', progress: 'Progress' }[x]}</button>)}
         </nav>
       </header>
 
       {tab === 'schedule' && <main className="grid scheduleGrid">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
-            <div className="dayDetailHeader"><p className="eyebrow">Day detail</p><h2>{fmtDay(selected)}</h2>{selectedDayPlanLabel && <p className="dayDetailMeta">{selectedDayPlanLabel}</p>}</div>
+          <div className="dayDetailHeader">
+            <p className="eyebrow">{selected === today ? 'Today' : 'Workout'}</p>
+            <h2>{fmtDay(selected)}</h2>
+            {selectedDayPlanLabel && <p className="dayDetailMeta">{selectedDayPlanLabel}</p>}
+            {!day.rest && day.items.length > 0 && <p className="workoutProgressCopy">{day.items.filter((item) => item.done).length} of {day.items.length} complete</p>}
+          </div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
-          {!day.rest && <>
-            <div className="stack">{day.items.length === 0 && <div className="empty">No items yet.</div>}{day.items.map((item) => {
+          {(day.rest || day.items.length === 0) && <div className="restState">
+            <span className="restIcon" aria-hidden="true">☾</span>
+            <div><h3>Rest day</h3><p>Recover today. Your next session will be ready when you are.</p></div>
+            {nextWorkoutDay && <button className="pill" onClick={() => focusDay(nextWorkoutDay.date, true)}>View next workout</button>}
+          </div>}
+          {!day.rest && day.items.length > 0 && <>
+            <div className="workoutList">{day.items.map((item) => {
               const ex = exById[item.exerciseId]; if (!ex) return null
               const expanded = expandedItems[item.id] ?? false
               const draft = itemDrafts[item.id] ?? makeItemDraft(item, ex)
               const progressMetric = effectiveProgressMetric(ex, draft.type)
               const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: applyReferenceToDraft(derivedHistory, ex, r, current[item.id] ?? makeItemDraft(item, ex)) }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, draft.type)}</button>)
-              return <article key={item.id} className={item.done ? 'card itemCardDone' : 'card'}>
-                <div className="row itemCardRow">
-                  <button className={['ring', ex.kind === 'habit' ? 'habitRing' : '', item.done ? 'done' : ''].filter(Boolean).join(' ')} onClick={() => toggleDone(selected, item)} aria-label={`Mark ${ex.name} complete`}><span /></button>
-                  <button className="exerciseToggle itemCardToggle" onClick={() => {
+              const lastResult = referenceSummary(derivedHistory, ex, 'last-result', draft.type)
+              return <article key={item.id} className={item.done ? 'workoutItem workoutItemDone' : 'workoutItem'}>
+                <div className="workoutItemRow">
+                  <button className="workoutItemMain" onClick={() => {
                     if (!expanded) {
                       setItemDrafts((current) => current[item.id] ? current : { ...current, [item.id]: makeItemDraft(item, ex) })
                     }
                     setExpandedItems((current) => ({ ...current, [item.id]: !expanded }))
-                  }}>
-                    <div className="grow itemSummaryBlock">
-                      <div className="itemTitleRow">
-                        <h3>{ex.name}</h3>
-                        {ex.kind === 'habit' && <span className="kindBadge">Habit</span>}
-                        <span className="itemTargetBadge">{compact(item.type, item.target)}</span>
-                      </div>
+                  }} aria-expanded={expanded}>
+                    <div className="workoutItemHeading">
+                      <h3>{ex.name}</h3>
+                      {ex.kind === 'habit' && <span className="kindBadge">Habit</span>}
                     </div>
-                    {expanded && <span>Hide</span>}
+                    <span className="workoutItemMeta">{workoutSummary(item.type, item.target)}{lastResult !== 'none' ? ` · Last ${lastResult}` : ''}</span>
                   </button>
-                  <button className="iconPill compactActionPill dangerPill" onClick={() => removeItem(item.id)} aria-label={`Remove ${ex.name} from ${fmtDay(selected)}`}><TrashIcon /></button>
+                  <button className={item.done ? 'logButton doneLogButton' : 'logButton'} onClick={() => {
+                    if (!expanded) setItemDrafts((current) => current[item.id] ? current : { ...current, [item.id]: makeItemDraft(item, ex) })
+                    setExpandedItems((current) => ({ ...current, [item.id]: !expanded }))
+                  }}>{item.done ? '✓ Done' : 'Log'}</button>
                 </div>
-                {expanded && <>
-                  <div className="detailCompactRow">
-                    <label className="field compactSelectField"><span>Target type</span><select value={draft.type} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), type: e.target.value as TT, target: blank(e.target.value as TT), timeText: '', weightText: '', countText: '', note: draft.note } }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
-                    <TargetEditor
-                      type={draft.type}
-                      target={draft.target}
-                      layout="detail"
-                      onChange={(target) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target } }))}
-                    />
-                  </div>
+                {expanded && <div className="loggerPanel">
+                  <div className="loggerHeading"><div><span className="fieldLabel">Log result</span><p>Target: {workoutSummary(draft.type, draft.target)}</p></div><button className="textButton" onClick={() => setExpandedItems((current) => ({ ...current, [item.id]: false }))}>Close</button></div>
                   <div className="detailCompactRow resultRow">
                     {progressMetric === 'time' && <label className="field compactMetricField"><span>Time logged</span><input placeholder="mm:ss or minutes" value={draft.timeText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), timeText: e.target.value } }))} onBlur={() => setItemDrafts((current) => {
                       const activeDraft = current[item.id] ?? makeItemDraft(item, ex)
@@ -2358,36 +2360,52 @@ export default function App() {
                     <div className="targetActions">{metricActions}</div>
                   </div>
                   <label className="field"><span>Completion note</span><input value={draft.note} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), note: e.target.value } }))} placeholder="Optional note for this day" /></label>
-                  <div className="nav">
-                    <button className="primary" onClick={() => saveItemDraft(item, ex)}>Save</button>
-                  </div>
-                </>}
+                  <button className="primary completeExerciseButton" onClick={() => void saveItemDraft(item, ex, true)}>{item.done ? 'Update result' : 'Complete exercise'}</button>
+                  <details className="secondaryTools itemOptions">
+                    <summary>Edit target & options</summary>
+                    <div className="stack compactStack">
+                      <div className="detailCompactRow targetEditRow">
+                        <label className="field compactSelectField"><span>Target type</span><select value={draft.type} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), type: e.target.value as TT, target: blank(e.target.value as TT), timeText: '', weightText: '', countText: '', note: draft.note } }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
+                        <TargetEditor type={draft.type} target={draft.target} layout="detail" onChange={(target) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target } }))} />
+                      </div>
+                      <div className="nav">
+                        <button className="pill" onClick={() => void saveItemDraft(item, ex)}>Save target</button>
+                        {item.done && <button className="pill" onClick={() => void updateItem(item.id, (current) => ({ ...current, done: false }), { persistMode: 'immediate' })}>Mark incomplete</button>}
+                        <button className="textButton dangerTextButton" onClick={() => removeItem(item.id)}>Remove from day</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>}
               </article>
             })}</div>
           </>}
-          <label className="field addExerciseField">
-            <select
-              aria-label="Select exercise or habit to add"
-              defaultValue=""
-              onChange={(event) => {
-                if (!event.target.value) return
-                void addExerciseToDay(event.target.value, selected)
-                event.target.value = ''
-              }}
-            >
-              <option value="">Select exercise or habit to add...</option>
-              {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.kind === 'habit' ? ' (Habit)' : ''}</option>)}
-            </select>
-          </label>
-          <label className="field"><textarea className="shortTextarea" rows={2} aria-label="Day notes" placeholder="Notes" value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
-          {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={toggleSkippedDay}>{day.skipped ? 'Unskip day' : 'Skip day'}</button><div className="inline compactInline"><input type="number" min={1} max={99} value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value))} aria-label="Days to push forward" /><button className="pill" onClick={shiftPlan} disabled={!shift || shift < 1}>Push forward</button></div></div>}
+          <details className="secondaryTools dayOptions">
+            <summary>Day options</summary>
+            <div className="stack compactStack">
+              <label className="field addExerciseField">
+                <span>Add an exercise or habit</span>
+                <select aria-label="Select exercise or habit to add" defaultValue="" onChange={(event) => {
+                  if (!event.target.value) return
+                  void addExerciseToDay(event.target.value, selected)
+                  event.target.value = ''
+                }}>
+                  <option value="">Select an item...</option>
+                  {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.kind === 'habit' ? ' (Habit)' : ''}</option>)}
+                </select>
+              </label>
+              <label className="field"><span>Day notes</span><textarea className="shortTextarea" rows={2} aria-label="Day notes" placeholder="Optional notes" value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
+              {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={toggleSkippedDay}>{day.skipped ? 'Unskip day' : 'Skip day'}</button><div className="inline compactInline"><input type="number" min={1} max={99} value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value))} aria-label="Days to push forward" /><button className="pill" onClick={shiftPlan} disabled={!shift || shift < 1}>Push forward</button></div></div>}
+            </div>
+          </details>
         </section>
 
         <section className="panel scheduleCalendarPanel">
-          <div className="row">
-            <div><p className="eyebrow">Calendar</p></div>
-            <div className="nav scheduleToggle">{(['calendar', 'list'] as const).map((x) => <button key={x} className={scheduleView === x ? 'pill active' : 'pill'} onClick={() => { setScheduleView(x); if (x === 'list') setVisibleListCount(5) }}>{x === 'calendar' ? 'Month' : 'List'}</button>)}</div>
+          <div className="row scheduleOverviewHeader">
+            <div><p className="eyebrow">Schedule</p><h3>Choose another day</h3></div>
+            <button className="pill" onClick={() => setScheduleOpen((current) => !current)} aria-expanded={scheduleOpen}>{scheduleOpen ? 'Hide schedule' : 'View schedule'}</button>
           </div>
+          {scheduleOpen && <div className="scheduleBrowser stack">
+          <div className="nav scheduleToggle">{(['calendar', 'list'] as const).map((x) => <button key={x} className={scheduleView === x ? 'pill active' : 'pill'} onClick={() => { setScheduleView(x); if (x === 'list') setVisibleListCount(5) }}>{x === 'calendar' ? 'Month' : 'List'}</button>)}</div>
           {scheduleView === 'calendar' ? <div className="calendarWrap">
             <div className="row"><button className="pill" onClick={() => setMonth(add(month, -28))}>Previous</button><h3>{fmtMonth(month)}</h3><button className="pill" onClick={() => setMonth(add(month, 35))}>Next</button></div>
             <div className="week">{DAYS.map((x) => <span key={x}>{x}</span>)}</div>
@@ -2456,6 +2474,7 @@ export default function App() {
             {!showPastDays && pastDays.length > 0 && <button className="pill" onClick={() => { setShowPastDays(true); setVisibleListCount((current) => current + pastDays.length) }}>Load previous</button>}
             {listDays.length > visibleListCount && <button className="pill" onClick={() => setVisibleListCount((current) => current + 5)}>Load 5 more</button>}
           </div>}
+          </div>}
         </section>
       </main>}
 
@@ -2481,14 +2500,16 @@ export default function App() {
       {tab === 'exercises' && <main className="grid">
         <section className="panel stack">
           <div className="row">
-            <div><p className="eyebrow">Library</p><h2>Manage exercises and habits</h2></div>
+            <div><p className="eyebrow">Library</p><h2>Find an item</h2></div>
             <button className="pill" onClick={startNewExercise}>New {libraryFilter}</button>
           </div>
           <div className="nav">
             {(['exercise', 'habit'] as const).map((kind) => <button key={kind} className={libraryFilter === kind ? 'pill active' : 'pill'} onClick={() => switchLibraryFilter(kind)}>{TRACKABLE_KIND_LABEL[kind]}s</button>)}
           </div>
-          <div className="stack">
-            {filteredLibraryExercises.map((ex) => <button key={ex.id} className={exerciseEditorMode === 'existing' && selectedExerciseId === ex.id ? 'listItem activeItem' : 'listItem'} onClick={() => selectExercise(ex.id)}><span className="listItemContent"><strong>{ex.name}</strong><span className="listMeta">{ex.category}{ex.kind === 'habit' ? <span className="kindBadge subtleBadge">Habit</span> : null}</span></span></button>)}
+          <label className="field librarySearch"><span>Search</span><input type="search" value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder={`Search ${libraryFilter}s`} /></label>
+          <div className="stack compactLibraryList">
+            {filteredLibraryExercises.length === 0 && <div className="empty compactEmpty">No matching items.</div>}
+            {filteredLibraryExercises.map((ex) => <button key={ex.id} className={exerciseEditorMode === 'existing' && selectedExerciseId === ex.id ? 'listItem compactLibraryRow activeItem' : 'listItem compactLibraryRow'} onClick={() => selectExercise(ex.id)}><span className="listItemContent"><strong>{ex.name}</strong><span className="listMeta">{ex.category}{ex.kind === 'habit' ? <span className="kindBadge subtleBadge">Habit</span> : null}</span></span><span aria-hidden="true">›</span></button>)}
           </div>
         </section>
         <section ref={exerciseDetailRef} className="panel stack">
@@ -2545,10 +2566,13 @@ export default function App() {
         <section className="panel stack">
           <div className="row">
             <div><p className="eyebrow">Plans</p><h2>Your plans</h2></div>
-            <div className="nav">
-              <button className="pill" onClick={() => planImportInputRef.current?.click()} disabled={importBusy || !hasSupabaseEnv}>{importBusy ? 'Analyzing...' : 'Import'}</button>
-              <button className="pill" onClick={startNewPlan}>New plan</button>
-            </div>
+            <details className="secondaryTools compactMenu">
+              <summary>Manage</summary>
+              <div className="stack compactStack">
+                <button className="pill" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); planImportInputRef.current?.click() }} disabled={importBusy || !hasSupabaseEnv}>{importBusy ? 'Analyzing...' : 'Import spreadsheet'}</button>
+                <button className="pill" onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void startNewPlan() }}>Create new plan</button>
+              </div>
+            </details>
           </div>
           <input ref={planImportInputRef} className="hiddenInput" type="file" accept=".xlsx,.xls,.csv" onChange={handlePlanSpreadsheetImport} />
           {!hasSupabaseEnv && <p className="mutedCopy">Spreadsheet import becomes available once the Cloudflare backend is connected.</p>}
@@ -2598,7 +2622,7 @@ export default function App() {
           <div className="stack">
             {state.plans.map((p) => <div key={p.id} className={selectedPlanId === p.id ? 'listItem activeItem planListRow' : 'listItem planListRow'}>
               <button className="planListButton" onClick={() => selectPlan(p.id)}><strong>{p.name}</strong></button>
-              <button className="iconPill iconTextPill softActionPill" onClick={() => { setApplyPlanId(p.id); setApplyStartDate(today) }} aria-label={`Apply ${p.name}`}>Apply</button>
+              {activePlanIds.has(p.id) ? <span className="status activePlanStatus">Active</span> : <button className="pill softActionPill" onClick={() => { setApplyPlanId(p.id); setApplyStartDate(today) }} aria-label={`Apply ${p.name}`}>Apply</button>}
             </div>)}
           </div>
           {applyPlanId && <div className="card stack">
@@ -2620,7 +2644,7 @@ export default function App() {
               return <article key={r.id} className="card stack">
                 <div className="row">
                   <div><h3>{runDisplayName(r, state.plans, today)}</h3><p>{completedDays} of {totalDays} days complete</p></div>
-                  <div className="dayRowActions"><button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })} aria-label={`Remove active run ${r.name}`}><TrashIcon /></button></div>
+                  <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove active run</button></details>
                 </div>
                 <div className="progressTrack" aria-label={`${progress}% complete`}>
                   <div className="progressFill" style={{ width: `${progress}%` }} />
@@ -2630,16 +2654,32 @@ export default function App() {
           </div>
         </section>
         {plan && <section ref={planDetailRef} className="panel stack planEditorPanel">
-          {plan ? <>
+          {!planEditing ? <>
+            <div className="row planOverviewHeader">
+              <div><p className="eyebrow">Plan overview</p><h2>{plan.name}</h2></div>
+              <button className="pill" onClick={() => setPlanEditing(true)}>Edit plan</button>
+            </div>
+            {plan.focus && <p className="planFocusCopy">{plan.focus}</p>}
+            <div className="planOverviewDays">
+              {plan.days.map((planDay, index) => <article key={planDay.id} className="planOverviewDay">
+                <span className="planDayNumber">{index + 1}</span>
+                <div><h3>{planDay.label}</h3><p>{planDay.items.length ? planDay.items.map((item) => {
+                  const exercise = exById[item.exerciseId]
+                  return exercise ? `${exercise.name} (${workoutSummary(item.type, item.target)})` : 'Exercise'
+                }).join(' · ') : 'Rest day'}</p></div>
+              </article>)}
+            </div>
+          </> : <>
             <div><p className="eyebrow">Manage plan</p><input className="planNameInput" value={planForm.name} onChange={(e) => setPlanForm((x) => ({ ...x, name: e.target.value }))} aria-label="Plan name" /></div>
             <label className="field"><span>Focus</span><textarea rows={2} value={planForm.focus} onChange={(e) => setPlanForm((x) => ({ ...x, focus: e.target.value }))} /></label>
             <div className="nav">
               <button className="primary" onClick={savePlanMeta}>Save plan</button>
-              <button className="iconPill dangerPill destructiveIconButton" onClick={() => {
-                if (!selectedPlanId) return
-                setKeepCompletedPlanDays(true)
-                setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'This will remove the plan template and any active runs tied to it.' })
-              }} aria-label="Delete plan"><TrashIcon /></button>
+              <button className="pill" onClick={() => { setPlanForm(formFromPlan(plan)); setPlanEditing(false) }}>Cancel</button>
+              <details className="secondaryTools compactMenu"><summary>More</summary><button className="textButton dangerTextButton" onClick={() => {
+                  if (!selectedPlanId) return
+                  setKeepCompletedPlanDays(true)
+                  setConfirmState({ kind: 'delete-plan', planId: selectedPlanId, title: 'Delete plan?', body: 'This will remove the plan template and any active runs tied to it.' })
+                }}>Delete plan</button></details>
             </div>
             {plan.days.length === 0 && <button className="addDayButton" onClick={() => addPlanDayAt(0)}>+ Add day</button>}
             {plan.days.map((pd, index) => <div key={pd.id} className="planDayStack">
@@ -2658,11 +2698,11 @@ export default function App() {
                       <p>{pd.items.length ? pd.items.map((it) => exById[it.exerciseId]?.name ?? 'Exercise').join(', ') : 'Rest day'}</p>
                     </div>
                   </button>
-                  <div className="dayRowActions">
-                    <button className="iconPill" onClick={() => addPlanDayAt(index + 1)} aria-label={`Add day after ${pd.label}`}>+</button>
-                    <button className="iconPill iconTextPill softActionPill" onClick={() => duplicatePlanDay(pd.id)} aria-label={`Duplicate ${pd.label}`}>Copy</button>
-                    <button className="iconPill dangerPill destructiveIconButton" onClick={() => deletePlanDay(pd.id)} aria-label={`Delete ${pd.label}`}><TrashIcon /></button>
-                  </div>
+                  <details className="secondaryTools compactMenu dayEditMenu"><summary aria-label={`Options for ${pd.label}`}>...</summary><div className="stack compactStack">
+                    <button className="textButton" onClick={() => addPlanDayAt(index + 1)}>Add day after</button>
+                    <button className="textButton" onClick={() => duplicatePlanDay(pd.id)}>Duplicate day</button>
+                    <button className="textButton dangerTextButton" onClick={() => deletePlanDay(pd.id)}>Delete day</button>
+                  </div></details>
                 </div>
                 {expandedPlanDays[pd.id] && <>
                   <label className="field">
@@ -2689,7 +2729,7 @@ export default function App() {
                       <button className="exerciseToggle" onClick={() => setExpandedPlanItems((current) => ({ ...current, [it.id]: !expanded }))}>
                         <div className="grow"><strong>{ex.name}</strong><p>{ex.name} | {sum(it.type, it.target)}</p></div>
                       </button>
-                      <button className="iconPill dangerPill destructiveIconButton" onClick={() => removePlanItem(pd.id, it.id)} aria-label={`Remove ${ex.name} from ${pd.label}`}><TrashIcon /></button>
+                      <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${ex.name}`}>...</summary><button className="textButton dangerTextButton" onClick={() => removePlanItem(pd.id, it.id)}>Remove</button></details>
                     </div>
                     {expanded && <>
                       <label className="field"><span>Target type</span><select value={it.type} onChange={(e) => updatePlanItem(pd.id, it.id, (x) => ({ ...x, type: e.target.value as TT, target: blank(e.target.value as TT) }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
@@ -2705,27 +2745,30 @@ export default function App() {
                 </>}
               </article>
             </div>)}
-          </> : null}
+          </>}
         </section>}
         {!plan && <section className="panel empty planEmptyState">
           <p>Select a plan to review or edit it.</p>
         </section>}
       </main>}
 
-      {tab === 'progress' && <main className="grid">
-        <section className="panel stack">
-          <div><p className="eyebrow">Progress</p><h2>Select an item</h2></div>
+      {tab === 'progress' && <main className="grid progressGrid">
+        <section className="panel stack progressPickerPanel">
+          <div><p className="eyebrow">Browse</p><h2>All tracked items</h2></div>
           <div className="stack">
             {progressExercises.length === 0 && <div className="empty">Complete an exercise or habit to start tracking progress here.</div>}
             {progressExercises.map((exercise) => <button key={exercise.id} className={selectedProgressExerciseId === exercise.id ? 'listItem activeItem' : 'listItem'} onClick={() => { setSelectedProgressExerciseId(exercise.id); cancelLogEdit() }}><strong>{exercise.name}</strong></button>)}
           </div>
         </section>
-        <section className="panel stack">
+        <section className="panel stack progressDetailPanel">
           {progressExercise ? <>
-          <div>
-            <p className="eyebrow">{TRACKABLE_KIND_LABEL[progressExercise.kind]} progress</p>
-            <h2>{progressExercise.name}</h2>
-            <p>{progressExercise.category}{progressExercise.equipment ? ` / ${progressExercise.equipment}` : ''}</p>
+          <div className="progressDetailHeader">
+            <div>
+              <p className="eyebrow">{TRACKABLE_KIND_LABEL[progressExercise.kind]} progress</p>
+              <h2>{progressExercise.name}</h2>
+              <p>{progressExercise.category}{progressExercise.equipment ? ` / ${progressExercise.equipment}` : ''}</p>
+            </div>
+            <label className="field progressSelect"><span>View another</span><select value={progressExercise.id} onChange={(event) => { setSelectedProgressExerciseId(event.target.value); cancelLogEdit() }}>{progressExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}</option>)}</select></label>
           </div>
           <div className="progressSummaryGrid">
             <div className="mini">
