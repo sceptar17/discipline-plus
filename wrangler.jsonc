@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "discipline-plus",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "discipline-plus",
+      "database_id": "65768f88-2999-49f0-a5ad-56723e7b7060",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "secrets": {
+    "required": ["ALLOWED_EMAIL", "OPENAI_API_KEY"]
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "FRONTEND_ORIGIN": "https://fitness.aparishhouse.com",
+    "ACCESS_TEAM_DOMAIN": "frosty-flower-f91d.cloudflareaccess.com",
+    "ACCESS_AUD": "8293097271859c1794b56b193352522882583286750fa8eb73d922dc1cc1075b",
+    "OPENAI_PLAN_MODEL": "gpt-4.1-mini"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

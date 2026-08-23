@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import type { User } from '@supabase/supabase-js'
+import type { User } from './lib/cloudflare'
 import * as XLSX from 'xlsx'
 import './App.css'
-import { hasSupabaseEnv, supabase, supabaseUrl } from './lib/supabase'
+import { hasSupabaseEnv, supabase, supabaseUrl } from './lib/cloudflare'
 
 type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
@@ -2551,7 +2551,7 @@ export default function App() {
             </div>
           </div>
           <input ref={planImportInputRef} className="hiddenInput" type="file" accept=".xlsx,.xls,.csv" onChange={handlePlanSpreadsheetImport} />
-          {!hasSupabaseEnv && <p className="mutedCopy">Spreadsheet import uses Supabase Edge Functions, so it becomes available once Supabase is connected.</p>}
+          {!hasSupabaseEnv && <p className="mutedCopy">Spreadsheet import becomes available once the Cloudflare backend is connected.</p>}
           {importAnalysis && <div className="card stack importPreviewCard">
             <div>
               <p className="eyebrow">Spreadsheet analysis</p>
@@ -2835,9 +2835,9 @@ export default function App() {
           {settingsSection === 'integrations' && <div className="stack">
             <div><p className="eyebrow">Integrations</p><h2>Coming next</h2></div>
             <div className="card stack">
-              <strong>Supabase</strong>
-              <p>{hasSupabaseEnv ? `Connected in app config: ${supabaseUrl}` : 'Supabase environment variables are not configured in this build.'}</p>
-              <span className={hasSupabaseEnv ? 'status' : 'status warn'}>{hasSupabaseEnv ? 'Ready for schema + auth setup' : 'Missing env vars'}</span>
+              <strong>Cloudflare</strong>
+              <p>{hasSupabaseEnv ? `Connected backend: ${supabaseUrl}` : 'The Cloudflare backend is not configured in this build.'}</p>
+              <span className={hasSupabaseEnv ? 'status' : 'status warn'}>{hasSupabaseEnv ? 'Workers + D1 ready' : 'Backend unavailable'}</span>
             </div>
             <div className="card stack">
               <strong>Calendar integration</strong>
@@ -2852,7 +2852,7 @@ export default function App() {
             <div><p className="eyebrow">Profile</p><h2>Account</h2></div>
             <div className="card stack">
               <strong>Google sign-in</strong>
-              <p>{hasSupabaseEnv ? (authLoading ? 'Checking your current session.' : user ? `Signed in as ${user.email ?? 'user'}` : 'Ready for Google sign-in.') : 'Supabase is not configured for this build.'}</p>
+              <p>{hasSupabaseEnv ? (authLoading ? 'Checking your current session.' : user ? `Signed in as ${user.email ?? 'user'}` : 'Ready for Google sign-in.') : 'Cloudflare authentication is not configured for this build.'}</p>
               {hasSupabaseEnv && <div className="nav">
                 {!user && !authLoading && <button className="primary" onClick={signInWithGoogle}>Continue with Google</button>}
                 {user && <button className="pill dangerPill" onClick={signOut}>Sign out</button>}
