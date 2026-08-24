@@ -16,39 +16,18 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.aggregate.AggregationResult
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.NutritionRecord
-import androidx.health.connect.client.records.StepsRecord
-import androidx.health.connect.client.records.WeightRecord
-import androidx.health.connect.client.records.metadata.DataOrigin
-import androidx.health.connect.client.request.AggregateRequest
-import androidx.health.connect.client.request.ReadRecordsRequest
-import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val syncBaseUrl = "https://discipline-plus-sync.bfust27.workers.dev"
-    private val permissions = setOf(
-        HealthPermission.getReadPermission(NutritionRecord::class),
-        HealthPermission.getReadPermission(StepsRecord::class),
-        HealthPermission.getReadPermission(WeightRecord::class),
-    )
-    private lateinit var tokenStore: SecureTokenStore
+    private val scope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+    private lateinit var syncEngine: HealthSyncEngine
     private var healthClient: HealthConnectClient? = null
     private lateinit var codeInput: EditText
     private lateinit var pairingStatus: TextView
@@ -59,18 +38,13 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
-        permissionStatus.text = if (granted.containsAll(permissions)) {
-            "Ready — nutrition, steps, and weight allowed"
-        } else {
-            "Some access is still missing"
-        }
-        refreshButtons()
+    ) {
+        refreshPermissionStatus()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        tokenStore = SecureTokenStore(this)
+        syncEngine = HealthSyncEngine(this)
         buildScreen()
         initializeHealthConnect()
         refreshPairingStatus()
@@ -116,8 +90,8 @@ class MainActivity : ComponentActivity() {
 
         page.addView(card().apply {
             addView(label("2  Allow Health Connect", 20f, R.color.ink, true))
-            addView(label("The app only asks to read nutrition, steps, and weight. It cannot change your Health Connect records.", 15f, R.color.muted).withMargins(bottom = 12))
-            requestButton = actionButton("Review permissions") { requestPermissions() }
+            addView(label("Allow nutrition, steps, and weight, plus background read access so syncing can continue automatically. The helper cannot change Health Connect records.", 15f, R.color.muted).withMargins(bottom = 12))
+            requestButton = actionButton("Enable automatic sync") { requestPermissions() }
             addView(requestButton)
             addView(secondaryButton("Manage Health Connect access") {
                 runCatching { startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS)) }
@@ -128,11 +102,11 @@ class MainActivity : ComponentActivity() {
         }.withMargins(bottom = 14))
 
         page.addView(card().apply {
-            addView(label("3  Sync", 20f, R.color.ink, true))
-            addView(label("Imports today and the previous 14 days. Website entries you typed manually stay in control.", 15f, R.color.muted).withMargins(bottom = 12))
+            addView(label("3  Automatic sync", 20f, R.color.ink, true))
+            addView(label("Runs about hourly and whenever this helper opens, importing today and the previous 14 days. Website entries you typed manually stay in control.", 15f, R.color.muted).withMargins(bottom = 12))
             syncButton = actionButton("Sync now") { syncNow() }
             addView(syncButton)
-            syncStatus = label("Nothing synced yet", 14f, R.color.muted).withMargins(top = 10)
+            syncStatus = label("Automatic sync has not run yet", 14f, R.color.muted).withMargins(top = 10)
             addView(syncStatus)
         })
 
@@ -153,31 +127,41 @@ class MainActivity : ComponentActivity() {
             initializeHealthConnect()
             return
         }
-        permissionLauncher.launch(permissions)
+        permissionLauncher.launch(HealthSyncPermissions.requested(healthClient ?: return))
     }
 
     private fun refreshPermissionStatus() {
         val client = healthClient ?: return
         scope.launch {
             val granted = runCatching { client.permissionController.getGrantedPermissions() }.getOrDefault(emptySet())
-            permissionStatus.text = if (granted.containsAll(permissions)) {
-                "Ready — nutrition, steps, and weight allowed"
-            } else {
-                "Permission needed for nutrition, steps, and weight"
+            val dataReady = granted.containsAll(HealthSyncPermissions.data)
+            val backgroundAvailable = HealthSyncPermissions.backgroundAvailable(client)
+            val backgroundReady = !backgroundAvailable || HealthSyncPermissions.requested(client).all { it in granted }
+            permissionStatus.text = when {
+                !dataReady -> "Permission needed for nutrition, steps, and weight"
+                !backgroundAvailable -> "Health data is ready, but this phone does not support background Health Connect reads"
+                !backgroundReady -> "One-time approval needed for automatic background sync"
+                else -> "Automatic sync enabled"
             }
+            requestButton.text = if (dataReady && backgroundReady) "Permissions enabled" else "Enable automatic sync"
+            if (dataReady && backgroundAvailable && backgroundReady && syncEngine.isPaired()) {
+                BackgroundSync.schedule(this@MainActivity)
+                BackgroundSync.syncSoon(this@MainActivity)
+            }
+            refreshSyncStatus()
             refreshButtons()
         }
     }
 
     private fun refreshPairingStatus() {
-        pairingStatus.text = if (tokenStore.read() == null) "Not paired" else "Paired securely"
+        pairingStatus.text = if (syncEngine.isPaired()) "Paired securely" else "Not paired"
         refreshButtons()
     }
 
     private fun refreshButtons() {
         if (!::requestButton.isInitialized || !::syncButton.isInitialized) return
         requestButton.isEnabled = healthClient != null
-        syncButton.isEnabled = healthClient != null && tokenStore.read() != null
+        syncButton.isEnabled = healthClient != null && syncEngine.isPaired()
     }
 
     private fun pairPhone() {
@@ -189,105 +173,46 @@ class MainActivity : ComponentActivity() {
         pairingStatus.text = "Pairing…"
         scope.launch {
             runCatching {
-                val response = postJson("$syncBaseUrl/pair", JSONObject().put("code", code).put("name", android.os.Build.MODEL))
-                tokenStore.save(response.getString("token"))
+                syncEngine.pair(code, android.os.Build.MODEL)
             }.onSuccess {
                 codeInput.setText("")
                 refreshPairingStatus()
+                refreshPermissionStatus()
             }.onFailure { pairingStatus.text = friendlyError(it) }
         }
     }
 
     private fun syncNow() {
         val client = healthClient ?: return
-        val token = tokenStore.read() ?: return
+        if (!syncEngine.isPaired()) return
         syncButton.isEnabled = false
         syncStatus.text = "Reading Health Connect…"
         scope.launch {
             runCatching {
                 val granted = client.permissionController.getGrantedPermissions()
-                if (!granted.containsAll(permissions)) error("Allow all three Health Connect permissions first.")
-                val zone = ZoneId.systemDefault()
-                val days = JSONArray()
-                for (offset in 14 downTo 0) {
-                    days.put(readDay(client, LocalDate.now(zone).minusDays(offset.toLong()), zone))
-                }
-                syncStatus.text = "Saving 15 days…"
-                postJson("$syncBaseUrl/sync", JSONObject().put("timezone", zone.id).put("days", days), token)
+                if (!granted.containsAll(HealthSyncPermissions.data)) error("Allow nutrition, steps, and weight first.")
+                syncEngine.sync()
             }.onSuccess {
-                val time = java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
-                syncStatus.text = "Synced through today at $time"
+                refreshSyncStatus()
             }.onFailure { syncStatus.text = friendlyError(it) }
             refreshButtons()
         }
     }
 
-    private suspend fun readDay(client: HealthConnectClient, date: LocalDate, zone: ZoneId): JSONObject {
-        val start = date.atStartOfDay(zone).toInstant()
-        val end = date.plusDays(1).atStartOfDay(zone).toInstant()
-        val range = TimeRangeFilter.between(start, end)
-        val nutrition: AggregationResult = client.aggregate(
-            AggregateRequest(
-                metrics = setOf(
-                    NutritionRecord.ENERGY_TOTAL,
-                    NutritionRecord.PROTEIN_TOTAL,
-                    NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL,
-                    NutritionRecord.TOTAL_FAT_TOTAL,
-                ),
-                timeRangeFilter = range,
-                dataOriginFilter = setOf(DataOrigin("com.sbs.diet")),
-            )
-        )
-        val stepResult = client.aggregate(
-            AggregateRequest(metrics = setOf(StepsRecord.COUNT_TOTAL), timeRangeFilter = range)
-        )
-        val weights = client.readRecords(
-            ReadRecordsRequest(recordType = WeightRecord::class, timeRangeFilter = range)
-        ).records
-        val latestWeight = weights.maxByOrNull { it.time }
-        val nutritionJson = JSONObject()
-            .putNullable("caloriesKcal", nutrition[NutritionRecord.ENERGY_TOTAL]?.inKilocalories)
-            .putNullable("proteinG", nutrition[NutritionRecord.PROTEIN_TOTAL]?.inGrams)
-            .putNullable("carbsG", nutrition[NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL]?.inGrams)
-            .putNullable("fatG", nutrition[NutritionRecord.TOTAL_FAT_TOTAL]?.inGrams)
-            .put("sourcePackage", "com.sbs.diet")
-        return JSONObject()
-            .put("date", date.toString())
-            .put("nutrition", nutritionJson)
-            .putNullable("steps", stepResult[StepsRecord.COUNT_TOTAL])
-            .apply {
-                if (latestWeight != null) {
-                    put("weight", JSONObject()
-                        .put("pounds", latestWeight.weight.inPounds)
-                        .put("measuredAt", latestWeight.time.toString())
-                        .put("recordId", latestWeight.metadata.id)
-                        .put("sourcePackage", latestWeight.metadata.dataOrigin.packageName))
-                }
-            }
-    }
-
-    private suspend fun postJson(url: String, body: JSONObject, token: String? = null): JSONObject = withContext(Dispatchers.IO) {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Accept", "application/json")
-            if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
-            connection.outputStream.use { it.write(body.toString().toByteArray()) }
-            val success = connection.responseCode in 200..299
-            val text = (if (success) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            val payload = if (text.isBlank()) JSONObject() else JSONObject(text)
-            if (!success) error(payload.optString("error", "Sync request failed."))
-            payload
-        } finally {
-            connection.disconnect()
+    private fun refreshSyncStatus() {
+        if (!::syncStatus.isInitialized) return
+        val syncedAt = syncEngine.lastSyncAt()
+        syncStatus.text = if (syncedAt == null) {
+            "Automatic sync has not run yet"
+        } else {
+            val time = runCatching {
+                Instant.parse(syncedAt).atZone(ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ofPattern("MMM d 'at' h:mm a", Locale.getDefault()))
+            }.getOrDefault("recently")
+            "Automatic sync enabled · Last synced $time"
         }
     }
 
-    private fun JSONObject.putNullable(name: String, value: Any?): JSONObject = put(name, value ?: JSONObject.NULL)
     private fun friendlyError(error: Throwable) = error.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Try again."
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 

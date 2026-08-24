@@ -3117,7 +3117,7 @@ export default function App() {
             <div className="card stack">
               <div>
                 <strong>Android Health Connect</strong>
-                <p>Import MacroFactor nutrition, phone and Pixel Watch steps, and body weight through the companion app.</p>
+                <p>Automatically import MacroFactor nutrition, phone and Pixel Watch steps, and body weight about hourly through the companion app.</p>
               </div>
               <a className="primary downloadButton" href="/downloads/discipline-plus-sync.apk" download>Download Android helper</a>
               {mobilePairing ? <div className="pairingCodeBox">
