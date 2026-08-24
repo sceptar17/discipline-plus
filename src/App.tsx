@@ -2600,7 +2600,7 @@ export default function App() {
           <section className="dailyHealthCard" aria-labelledby="daily-health-title">
             <div className="dailyHealthHeading">
               <div><p className="eyebrow">Daily numbers</p><h3 id="daily-health-title">Nutrition, activity & weight</h3></div>
-              <span className="sourceBadge">Manual</span>
+              <span className="sourceBadge">Daily totals</span>
             </div>
             {dailyHealthLoading ? <p className="mutedCopy">Loading daily numbers...</p> : <>
               <div className="dailyHealthGrid">
@@ -2613,7 +2613,7 @@ export default function App() {
                   ['weight', 'Weight', 'lb', 'decimal'],
                 ] as const).map(([field, label, unit, inputMode]) => <label key={field} className="field dailyMetricField"><span>{label}</span><div className="metricInputWrap"><input type="text" inputMode={inputMode} placeholder="—" value={dailyHealthDraft[field]} onChange={(event) => setDailyHealthDraft((current) => ({ ...current, [field]: event.target.value }))} />{unit && <small>{unit}</small>}</div></label>)}
               </div>
-              <div className="dailyHealthActions"><button className="primary" onClick={() => void saveDailyHealth()} disabled={dailyHealthSaving}>{dailyHealthSaving ? 'Saving...' : 'Save daily numbers'}</button><p>Health Connect will populate these automatically in the next slice.</p></div>
+              <div className="dailyHealthActions"><button className="primary" onClick={() => void saveDailyHealth()} disabled={dailyHealthSaving}>{dailyHealthSaving ? 'Saving...' : 'Save daily numbers'}</button><p>Health Connect values appear here after you sync the Android helper.</p></div>
             </>}
           </section>
           <details className="secondaryTools dayOptions">
