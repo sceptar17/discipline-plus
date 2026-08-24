@@ -97,6 +97,36 @@ const TABLES = {
     },
     writable: ['id', 'user_id', 'source_item_id', 'exercise_id', 'date', 'type', 'target', 'result'],
   },
+  daily_health: {
+    ownerColumn: 'user_id',
+    columns: {
+      id: 'text', user_id: 'text', date: 'text', timezone: 'text', calories_kcal: 'number', protein_g: 'number', carbs_g: 'number', fat_g: 'number',
+      steps: 'integer', nutrition_source: 'text', steps_source: 'text', synced_at: 'text', provenance: 'json', created_at: 'text', updated_at: 'text',
+    },
+    writable: ['id', 'user_id', 'date', 'timezone', 'calories_kcal', 'protein_g', 'carbs_g', 'fat_g', 'steps', 'nutrition_source', 'steps_source', 'synced_at', 'provenance'],
+  },
+  body_weight_entries: {
+    ownerColumn: 'user_id',
+    columns: {
+      id: 'text', user_id: 'text', measured_at: 'text', local_date: 'text', weight_lb: 'number', source: 'text', source_record_id: 'text', created_at: 'text', updated_at: 'text',
+    },
+    writable: ['id', 'user_id', 'measured_at', 'local_date', 'weight_lb', 'source', 'source_record_id'],
+  },
+  coaching_profiles: {
+    ownerColumn: 'user_id',
+    columns: {
+      id: 'text', user_id: 'text', goal_name: 'text', start_weight_lb: 'number', height_inches: 'number', target_weight_lb: 'number', desired_loss_min_lb: 'number',
+      desired_loss_max_lb: 'number', targets: 'json', equipment: 'text', calorie_context: 'text', coaching_style: 'json', created_at: 'text', updated_at: 'text',
+    },
+    writable: ['id', 'user_id', 'goal_name', 'start_weight_lb', 'height_inches', 'target_weight_lb', 'desired_loss_min_lb', 'desired_loss_max_lb', 'targets', 'equipment', 'calorie_context', 'coaching_style'],
+  },
+  coaching_notes: {
+    ownerColumn: 'user_id',
+    columns: {
+      id: 'text', user_id: 'text', category: 'text', exercise_id: 'text', title: 'text', body: 'text', status: 'text', priority: 'integer', effective_from: 'text', created_at: 'text', updated_at: 'text',
+    },
+    writable: ['id', 'user_id', 'category', 'exercise_id', 'title', 'body', 'status', 'priority', 'effective_from'],
+  },
 } as const satisfies Record<string, TableDefinition>
 
 type TableName = keyof typeof TABLES

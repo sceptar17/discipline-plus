@@ -8,8 +8,10 @@ type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
 type RM = 'last-result' | 'personal-best'
 type PM = 'count' | 'time' | 'weight'
+type EffortRating = 'easy' | 'moderate' | 'hard' | 'limit'
 type Target = { count?: number; sets?: number; reps?: number; seconds?: number; distance?: number; unit?: 'mi' | 'km'; weight?: number }
-type Result = { seconds?: number; timeText?: string; weight?: number; count?: number; note?: string }
+type SetResult = { reps: number; weight?: number }
+type Result = { seconds?: number; timeText?: string; weight?: number; count?: number; sets?: SetResult[]; difficulty?: EffortRating; note?: string }
 type Exercise = { id: string; kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
 type Item = { id: string; exerciseId: string; type: TT; target: Target; ref: RM; done: boolean; result: Result }
 type Day = { date: string; notes: string; rest: boolean; skipped: boolean; runId?: string; dayNo?: number; items: Item[] }
@@ -24,7 +26,8 @@ type State = { exercises: Exercise[]; schedule: Day[]; plans: Plan[]; runs: Run[
 type ExerciseForm = { kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
 type PlanForm = { name: string; focus: string }
 type Toast = { id: string; message: string }
-type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; note: string }
+type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
+type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
 type WorkbookPreview = { fileName: string; sheets: Array<{ name: string; rows: string[][] }> }
 type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: string; defaultType: TT; progressMetric: PM; usedOnDays: string[] }
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
@@ -76,6 +79,12 @@ const workoutSummary = (t: TT, x: Target) => {
   if (t === 'distance') return `${x.distance ?? 0} ${x.unit ?? 'mi'}`
   return `${x.count ?? 0} reps for time`
 }
+const resultSetSummary = (result: Result) => {
+  if (!result.sets?.length) return ''
+  const weights = Array.from(new Set(result.sets.map((set) => set.weight).filter((weight): weight is number => weight !== undefined)))
+  const weight = weights.length === 1 ? `${weights[0]} lb · ` : ''
+  return `${weight}${result.sets.map((set) => set.reps).join(' / ')}`
+}
 const kindOrder: Record<TK, number> = { exercise: 0, habit: 1 }
 const allowedTypesForKind = (kind: TK): TT[] => kind === 'habit' ? ['count', 'duration'] : (Object.keys(TT_LABEL) as TT[])
 const defaultCategoryForKind = (kind: TK) => kind === 'habit' ? HABIT_CATEGORY_OPTIONS[0] : EXERCISE_CATEGORY_OPTIONS[0]
@@ -101,10 +110,30 @@ const importPlanName = (date = new Date()) => {
 const validTargetTypes = new Set<TT>(['count', 'sets', 'duration', 'distance', 'for-time', 'weighted'])
 const validProgressMetrics = new Set<PM>(['count', 'time', 'weight'])
 const validRefs = new Set<RM>(['last-result', 'personal-best'])
+const COACHING_NOTE_SEEDS = [
+  { key: 'midline-doming', category: 'safety', title: 'Avoid pronounced abdominal doming', body: 'Straight-leg raises produced pronounced abdominal midline doming and are removed for now. Avoid movements that reproduce pronounced doming and prioritize pressure control.', priority: 3 },
+  { key: 'dead-bug-substitution', category: 'modification', title: 'Use dead bugs for core work', body: 'Use dead bugs, generally 3 x 8 per side, while maintaining abdominal control.', priority: 2 },
+  { key: 'right-elbow', category: 'symptom', title: 'Monitor right elbow', body: 'Overhead triceps extensions have sometimes concerned the right elbow. Skull crushers have been tolerated; progress triceps work conservatively and monitor symptoms.', priority: 3 },
+  { key: 'kickstand-rdl', category: 'modification', title: 'Use kickstand RDL', body: 'A kickstand or staggered-stance RDL currently works better than a true single-leg RDL because balance is limiting.', priority: 1 },
+  { key: 'lateral-raise-load', category: 'progression', title: 'Keep lateral raises strict', body: 'Lateral raises are currently better around 5 lb because strict 10-lb repetitions deteriorate.', priority: 2 },
+  { key: 'clean-reps', category: 'principle', title: 'Prioritize clean repetitions', body: 'Clean repetitions matter more than forcing the prescribed repetition count.', priority: 2 },
+  { key: 'double-progression', category: 'principle', title: 'Add reps before load', body: 'For most lifting, add clean repetitions within the range before increasing PowerBlock weight.', priority: 2 },
+  { key: 'no-calorie-eatback', category: 'nutrition', title: 'Do not automatically eat back exercise calories', body: 'Exercise-calorie estimates should not automatically increase the daily calorie allowance.', priority: 2 },
+] as const
 const safeImportedType = (kind: TK, type: TT): TT => sanitizeExerciseDefaultType(kind, type)
 const allowedTypesFromImportedItems = (kind: TK, itemTypes: TT[], defaultType: TT) => sanitizeAllowedTypes(kind, itemTypes.map((type) => safeImportedType(kind, type)), defaultType)
 const parseNumberInput = (value: string) => value.trim() === '' ? undefined : Number(value)
 const numberInputValue = (value?: number) => value ?? ''
+const emptyDailyHealthDraft = (): DailyHealthDraft => ({ calories: '', protein: '', carbs: '', fat: '', steps: '', weight: '' })
+const parseOptionalNumber = (value: string) => {
+  const parsed = parseNumberInput(value)
+  return parsed !== undefined && Number.isFinite(parsed) ? parsed : null
+}
+const parseSetReps = (value: string) => value
+  .split(/[\s,/x×-]+/)
+  .map((part) => part.trim())
+  .filter(Boolean)
+  .map(Number)
 const targetForType = (type: TT, target: Target): Target => {
   if (type === 'count') return { count: Math.max(1, Number(target.count ?? 1)) }
   if (type === 'sets') return { sets: Math.max(1, Number(target.sets ?? 3)), reps: Math.max(1, Number(target.reps ?? 10)) }
@@ -582,12 +611,17 @@ function defaultResultForLog(log: Log, exercise: Exercise): Result {
 
 function makeItemDraft(item: Item, exercise: Exercise): ItemDraft {
   const progressMetric = effectiveProgressMetric(exercise, item.type)
+  const targetSetReps = item.target.sets && item.target.reps
+    ? Array.from({ length: item.target.sets }, () => item.target.reps).join(' / ')
+    : ''
   return {
     type: item.type,
     target: clone(item.target),
     timeText: item.result.timeText ?? (item.result.seconds !== undefined ? fmtSecs(item.result.seconds) : ''),
     weightText: item.result.weight !== undefined ? String(item.result.weight) : (item.target.weight !== undefined ? String(item.target.weight) : ''),
     countText: item.result.count !== undefined ? String(item.result.count) : (progressMetric === 'count' && item.type !== 'duration' && item.type !== 'for-time' ? String(totalCount(item.target)) : ''),
+    setRepsText: item.result.sets?.length ? item.result.sets.map((set) => set.reps).join(' / ') : targetSetReps,
+    difficulty: item.result.difficulty ?? '',
     note: item.result.note ?? '',
   }
 }
@@ -599,6 +633,56 @@ async function ensureProfile(currentUser: User) {
     email: currentUser.email ?? null,
     display_name: currentUser.user_metadata?.full_name ?? currentUser.user_metadata?.name ?? currentUser.email ?? 'Discipline + user',
   })
+}
+
+async function ensureCoachingFoundation(currentUser: User) {
+  if (!supabase) return
+  const { data: profileRows, error: profileReadError } = await supabase.from('coaching_profiles').select('id').eq('user_id', currentUser.id)
+  if (profileReadError) {
+    console.error('coaching profile read failed', profileReadError)
+    return
+  }
+  if (!profileRows?.length) {
+    const { error } = await supabase.from('coaching_profiles').upsert({
+      id: `coach-profile-${currentUser.id}`,
+      user_id: currentUser.id,
+      goal_name: '60-day cut/recomposition',
+      start_weight_lb: 199,
+      height_inches: 72,
+      target_weight_lb: 190,
+      desired_loss_min_lb: 1,
+      desired_loss_max_lb: 1.5,
+      targets: { calories: { min: 2000, max: 2200 }, protein_g: { min: 170, max: 190 }, steps: 8000, lifting_sessions: 4, cardio_sessions: 2, recovery_days: 1 },
+      equipment: 'Two PowerBlock adjustable dumbbells, maximum 50 lb each.',
+      calorie_context: 'Displayed food intake may underestimate actual intake by roughly 100-200 calories because small additions are sometimes omitted.',
+      coaching_style: { concise: true, use_trends: true, avoid_manufactured_problems: true, give_next_session_recommendations: true },
+    })
+    if (error) console.error('coaching profile seed failed', error)
+  }
+
+  const { data: noteRows, error: noteReadError } = await supabase.from('coaching_notes').select('id').eq('user_id', currentUser.id)
+  if (noteReadError) {
+    console.error('coaching notes read failed', noteReadError)
+    return
+  }
+  const existingIds = new Set((noteRows ?? []).map((row) => row.id))
+  const missingNotes = COACHING_NOTE_SEEDS
+    .map((note) => ({
+      id: `coach-note-${currentUser.id}-${note.key}`,
+      user_id: currentUser.id,
+      category: note.category,
+      exercise_id: null,
+      title: note.title,
+      body: note.body,
+      status: 'active',
+      priority: note.priority,
+      effective_from: null,
+    }))
+    .filter((note) => !existingIds.has(note.id))
+  if (missingNotes.length) {
+    const { error } = await supabase.from('coaching_notes').upsert(missingNotes)
+    if (error) console.error('coaching notes seed failed', error)
+  }
 }
 
 function catalogExercisesFromSlices(plans: Plan[], runs: Run[], schedule: Day[], logs: Log[]) {
@@ -789,6 +873,9 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('data')
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
   const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
+  const [dailyHealthDraft, setDailyHealthDraft] = useState<DailyHealthDraft>(() => emptyDailyHealthDraft())
+  const [dailyHealthLoading, setDailyHealthLoading] = useState(false)
+  const [dailyHealthSaving, setDailyHealthSaving] = useState(false)
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, boolean>>({})
   const [expandedPlanItems, setExpandedPlanItems] = useState<Record<string, boolean>>({})
   const [draggedPlanDayId, setDraggedPlanDayId] = useState<string | null>(null)
@@ -858,6 +945,7 @@ export default function App() {
       setUser(data.session?.user ?? null)
       if (data.session?.user) {
         await ensureProfile(data.session.user)
+        await ensureCoachingFoundation(data.session.user)
       } else {
         resetToSignedOutShell()
       }
@@ -872,6 +960,7 @@ export default function App() {
       setAuthLoading(false)
       if (nextSession?.user) {
         void ensureProfile(nextSession.user)
+        void ensureCoachingFoundation(nextSession.user)
       } else {
         resetToSignedOutShell()
       }
@@ -882,6 +971,40 @@ export default function App() {
       authListener.subscription.unsubscribe()
     }
   }, [])
+  useEffect(() => {
+    if (!supabase || !user) {
+      setDailyHealthDraft(emptyDailyHealthDraft())
+      return
+    }
+    let active = true
+    const loadDailyHealth = async () => {
+      setDailyHealthLoading(true)
+      const [{ data: healthRows, error: healthError }, { data: weightRows, error: weightError }] = await Promise.all([
+        supabase.from('daily_health').select('id, calories_kcal, protein_g, carbs_g, fat_g, steps').eq('user_id', user.id).eq('date', selected),
+        supabase.from('body_weight_entries').select('id, weight_lb, source, measured_at').eq('user_id', user.id).eq('local_date', selected).order('measured_at', { ascending: false }),
+      ])
+      if (!active) return
+      if (healthError || weightError) {
+        console.error('daily health load failed', healthError ?? weightError)
+        setDailyHealthLoading(false)
+        return
+      }
+      const health = healthRows?.[0]
+      const weights = weightRows ?? []
+      const weight = weights.find((row) => row.source === 'manual') ?? weights[0]
+      setDailyHealthDraft({
+        calories: health?.calories_kcal === null || health?.calories_kcal === undefined ? '' : String(health.calories_kcal),
+        protein: health?.protein_g === null || health?.protein_g === undefined ? '' : String(health.protein_g),
+        carbs: health?.carbs_g === null || health?.carbs_g === undefined ? '' : String(health.carbs_g),
+        fat: health?.fat_g === null || health?.fat_g === undefined ? '' : String(health.fat_g),
+        steps: health?.steps === null || health?.steps === undefined ? '' : String(health.steps),
+        weight: weight?.weight_lb === undefined ? '' : String(weight.weight_lb),
+      })
+      setDailyHealthLoading(false)
+    }
+    void loadDailyHealth()
+    return () => { active = false }
+  }, [selected, user])
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
   const sortedExercises = useMemo(() => [...state.exercises].sort(compareExercises), [state.exercises])
   const filteredLibraryExercises = useMemo(() => {
@@ -1523,6 +1646,63 @@ export default function App() {
     }
     pushToast('Signed out.')
   }
+  const saveDailyHealth = async () => {
+    if (!supabase || !user || dailyHealthSaving) return
+    const values = {
+      calories: parseOptionalNumber(dailyHealthDraft.calories),
+      protein: parseOptionalNumber(dailyHealthDraft.protein),
+      carbs: parseOptionalNumber(dailyHealthDraft.carbs),
+      fat: parseOptionalNumber(dailyHealthDraft.fat),
+      steps: parseOptionalNumber(dailyHealthDraft.steps),
+      weight: parseOptionalNumber(dailyHealthDraft.weight),
+    }
+    const invalidField = (Object.entries(dailyHealthDraft) as Array<[keyof DailyHealthDraft, string]>).find(([field, raw]) => {
+      if (!raw.trim()) return false
+      const value = values[field]
+      return value === null || value < 0 || (field === 'weight' && value <= 0) || (field === 'steps' && !Number.isInteger(value))
+    })
+    if (invalidField) {
+      pushToast(`Check the ${invalidField[0]} value.`)
+      return
+    }
+
+    setDailyHealthSaving(true)
+    const healthId = `daily-health-${user.id}-${selected}`
+    const { error: healthError } = await supabase.from('daily_health').upsert({
+      id: healthId,
+      user_id: user.id,
+      date: selected,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago',
+      calories_kcal: values.calories,
+      protein_g: values.protein,
+      carbs_g: values.carbs,
+      fat_g: values.fat,
+      steps: values.steps,
+      nutrition_source: 'manual',
+      steps_source: 'manual',
+      synced_at: new Date().toISOString(),
+      provenance: { entry: 'web' },
+    })
+    const weightId = `body-weight-${user.id}-${selected}-manual`
+    const weightResult = values.weight === null
+      ? await supabase.from('body_weight_entries').delete().eq('id', weightId)
+      : await supabase.from('body_weight_entries').upsert({
+          id: weightId,
+          user_id: user.id,
+          measured_at: d(selected).toISOString(),
+          local_date: selected,
+          weight_lb: values.weight,
+          source: 'manual',
+          source_record_id: `manual-${selected}`,
+        })
+    setDailyHealthSaving(false)
+    if (healthError || weightResult.error) {
+      console.error('daily health save failed', healthError ?? weightResult.error)
+      pushToast('Could not save daily numbers.')
+      return
+    }
+    pushToast('Daily numbers saved.')
+  }
 
   const upsertDay = async (date: string, fx: (d0: Day) => Day) => {
     const base = state.schedule.find((x) => x.date === date) ?? { date, notes: '', rest: true, skipped: false, items: [] }
@@ -1683,6 +1863,13 @@ export default function App() {
     const parsedSeconds = parseSecs(draft.timeText)
     const parsedWeight = draft.weightText.trim() ? Number(draft.weightText) : undefined
     const parsedCount = draft.countText.trim() ? Number(draft.countText) : undefined
+    const supportsSetResults = (draft.type === 'sets' || draft.type === 'weighted') && (draft.target.sets ?? 0) > 0
+    const parsedSetReps = supportsSetResults && draft.setRepsText.trim() ? parseSetReps(draft.setRepsText) : []
+
+    if (parsedSetReps.some((reps) => !Number.isInteger(reps) || reps < 0)) {
+      pushToast('Enter set reps like 8 / 8 / 7 / 7.')
+      return
+    }
 
     if (draft.note.trim()) nextResult.note = draft.note.trim()
     if (draft.timeText.trim()) {
@@ -1691,6 +1878,11 @@ export default function App() {
     }
     if (parsedWeight !== undefined && !Number.isNaN(parsedWeight)) nextResult.weight = parsedWeight
     if (parsedCount !== undefined && !Number.isNaN(parsedCount)) nextResult.count = parsedCount
+    if (parsedSetReps.length) {
+      nextResult.sets = parsedSetReps.map((reps) => ({ reps, ...(nextResult.weight !== undefined ? { weight: nextResult.weight } : {}) }))
+      nextResult.count = parsedSetReps.reduce((total, reps) => total + reps, 0)
+    }
+    if (draft.difficulty) nextResult.difficulty = draft.difficulty
 
     const saved = await updateItem(item.id, (x) => ({
       ...x,
@@ -1759,13 +1951,7 @@ export default function App() {
     if (!editingLog) return
     const exercise = exById[editingLog.exerciseId]
     if (!exercise) return
-    const nextResult: Result = {
-      seconds: progressEdit.seconds,
-      timeText: progressEdit.timeText,
-      weight: progressEdit.weight,
-      count: progressEdit.count,
-      note: progressEdit.note,
-    }
+    const nextResult: Result = { ...progressEdit }
     if (editingLog.sourceItemId) {
       await updateItemOnDate(editingLog.date, editingLog.sourceItemId, (item) => ({ ...item, result: nextResult, done: true }), { persistMode: 'immediate' })
     } else {
@@ -2326,8 +2512,10 @@ export default function App() {
               const expanded = expandedItems[item.id] ?? false
               const draft = itemDrafts[item.id] ?? makeItemDraft(item, ex)
               const progressMetric = effectiveProgressMetric(ex, draft.type)
+              const supportsSetResults = (draft.type === 'sets' || draft.type === 'weighted') && (draft.target.sets ?? 0) > 0
               const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: applyReferenceToDraft(derivedHistory, ex, r, current[item.id] ?? makeItemDraft(item, ex)) }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(derivedHistory, ex, r, draft.type)}</button>)
               const lastResult = referenceSummary(derivedHistory, ex, 'last-result', draft.type)
+              const loggedSets = item.done ? resultSetSummary(item.result) : ''
               return <article key={item.id} className={item.done ? 'workoutItem workoutItemDone' : 'workoutItem'}>
                 <div className="workoutItemRow">
                   <button className="workoutItemMain" onClick={() => {
@@ -2340,7 +2528,7 @@ export default function App() {
                       <h3>{ex.name}</h3>
                       {ex.kind === 'habit' && <span className="kindBadge">Habit</span>}
                     </div>
-                    <span className="workoutItemMeta">{workoutSummary(item.type, item.target)}{lastResult !== 'none' ? ` · Last ${lastResult}` : ''}</span>
+                    <span className="workoutItemMeta">{loggedSets ? `Logged ${loggedSets}` : workoutSummary(item.type, item.target)}{lastResult !== 'none' ? ` · Last ${lastResult}` : ''}</span>
                   </button>
                   <button className={item.done ? 'logButton doneLogButton' : 'logButton'} onClick={() => {
                     if (!expanded) setItemDrafts((current) => current[item.id] ? current : { ...current, [item.id]: makeItemDraft(item, ex) })
@@ -2356,16 +2544,22 @@ export default function App() {
                       return { ...current, [item.id]: { ...activeDraft, timeText: parsed !== undefined ? fmtSecs(parsed) : activeDraft.timeText } }
                     })} /></label>}
                     {progressMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="text" inputMode="decimal" placeholder="0" value={draft.weightText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), weightText: e.target.value } }))} /></label>}
-                    {progressMetric === 'count' && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual count</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
+                    {supportsSetResults && <label className="field setRepsField"><span>Reps by set</span><input type="text" inputMode="numeric" placeholder="8 / 8 / 7 / 7" value={draft.setRepsText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), setRepsText: e.target.value } }))} /></label>}
+                    {progressMetric === 'count' && !supportsSetResults && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual count</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
                     <div className="targetActions">{metricActions}</div>
                   </div>
+                  <label className="field compactDifficultyField"><span>How did it feel?</span><select value={draft.difficulty} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), difficulty: e.target.value as '' | EffortRating } }))}><option value="">Not rated</option><option value="easy">Easy</option><option value="moderate">Moderate</option><option value="hard">Hard</option><option value="limit">At my limit</option></select></label>
                   <label className="field"><span>Completion note</span><input value={draft.note} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), note: e.target.value } }))} placeholder="Optional note for this day" /></label>
                   <button className="primary completeExerciseButton" onClick={() => void saveItemDraft(item, ex, true)}>{item.done ? 'Update result' : 'Complete exercise'}</button>
                   <details className="secondaryTools itemOptions">
                     <summary>Edit target & options</summary>
                     <div className="stack compactStack">
                       <div className="detailCompactRow targetEditRow">
-                        <label className="field compactSelectField"><span>Target type</span><select value={draft.type} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), type: e.target.value as TT, target: blank(e.target.value as TT), timeText: '', weightText: '', countText: '', note: draft.note } }))}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
+                        <label className="field compactSelectField"><span>Target type</span><select value={draft.type} onChange={(e) => {
+                          const nextType = e.target.value as TT
+                          const nextTarget = blank(nextType)
+                          setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), type: nextType, target: nextTarget, timeText: '', weightText: '', countText: '', setRepsText: nextTarget.sets && nextTarget.reps ? Array.from({ length: nextTarget.sets }, () => nextTarget.reps).join(' / ') : '', note: draft.note } }))
+                        }}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
                         <TargetEditor type={draft.type} target={draft.target} layout="detail" onChange={(target) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target } }))} />
                       </div>
                       <div className="nav">
@@ -2379,6 +2573,25 @@ export default function App() {
               </article>
             })}</div>
           </>}
+          <section className="dailyHealthCard" aria-labelledby="daily-health-title">
+            <div className="dailyHealthHeading">
+              <div><p className="eyebrow">Daily numbers</p><h3 id="daily-health-title">Nutrition, activity & weight</h3></div>
+              <span className="sourceBadge">Manual</span>
+            </div>
+            {dailyHealthLoading ? <p className="mutedCopy">Loading daily numbers...</p> : <>
+              <div className="dailyHealthGrid">
+                {([
+                  ['calories', 'Calories', 'kcal', 'numeric'],
+                  ['protein', 'Protein', 'g', 'decimal'],
+                  ['carbs', 'Carbs', 'g', 'decimal'],
+                  ['fat', 'Fat', 'g', 'decimal'],
+                  ['steps', 'Steps', '', 'numeric'],
+                  ['weight', 'Weight', 'lb', 'decimal'],
+                ] as const).map(([field, label, unit, inputMode]) => <label key={field} className="field dailyMetricField"><span>{label}</span><div className="metricInputWrap"><input type="text" inputMode={inputMode} placeholder="—" value={dailyHealthDraft[field]} onChange={(event) => setDailyHealthDraft((current) => ({ ...current, [field]: event.target.value }))} />{unit && <small>{unit}</small>}</div></label>)}
+              </div>
+              <div className="dailyHealthActions"><button className="primary" onClick={() => void saveDailyHealth()} disabled={dailyHealthSaving}>{dailyHealthSaving ? 'Saving...' : 'Save daily numbers'}</button><p>Health Connect will populate these automatically in the next slice.</p></div>
+            </>}
+          </section>
           <details className="secondaryTools dayOptions">
             <summary>Day options</summary>
             <div className="stack compactStack">

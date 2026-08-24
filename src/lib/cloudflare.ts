@@ -43,6 +43,35 @@ type DynamicRow = {
   display_name: string
   created_at: string
   updated_at: string
+  calories_kcal: number | null
+  protein_g: number | null
+  carbs_g: number | null
+  fat_g: number | null
+  steps: number | null
+  timezone: string
+  nutrition_source: string
+  steps_source: string
+  synced_at: string | null
+  provenance: unknown
+  measured_at: string
+  local_date: string
+  weight_lb: number
+  source: string
+  source_record_id: string | null
+  goal_name: string
+  start_weight_lb: number | null
+  height_inches: number | null
+  target_weight_lb: number | null
+  desired_loss_min_lb: number | null
+  desired_loss_max_lb: number | null
+  targets: unknown
+  calorie_context: string
+  coaching_style: unknown
+  title: string
+  body: string
+  status: string
+  priority: number
+  effective_from: string | null
 }
 type QueryResult = { data: DynamicRow[] | null; error: ClientError | null }
 type Filter = { column: string; operator: 'eq' | 'in'; value: unknown }
