@@ -1568,6 +1568,34 @@ textarea:focus-visible {
   }
 }
 
+.pairingCodeBox {
+  display: grid;
+  gap: 7px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.pairingCodeBox span,
+.pairingCodeBox small {
+  color: var(--text-muted);
+}
+
+.pairingCodeBox strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(1.35rem, 4vw, 2rem);
+  letter-spacing: 0.08em;
+}
+
+.downloadButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  text-decoration: none;
+}
+
 @media (max-width: 980px) {
   .app {
     width: min(100vw - 20px, 1440px);

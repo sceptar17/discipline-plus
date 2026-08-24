@@ -28,6 +28,7 @@ type PlanForm = { name: string; focus: string }
 type Toast = { id: string; message: string }
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
 type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
+type MobilePairing = { code: string; expiresAt: string; syncUrl: string }
 type WorkbookPreview = { fileName: string; sheets: Array<{ name: string; rows: string[][] }> }
 type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: string; defaultType: TT; progressMetric: PM; usedOnDays: string[] }
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
@@ -871,6 +872,8 @@ export default function App() {
   const [importWorkbook, setImportWorkbook] = useState<WorkbookPreview | null>(null)
   const [importBusy, setImportBusy] = useState(false)
   const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('data')
+  const [mobilePairing, setMobilePairing] = useState<MobilePairing | null>(null)
+  const [mobilePairingLoading, setMobilePairingLoading] = useState(false)
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
   const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
   const [dailyHealthDraft, setDailyHealthDraft] = useState<DailyHealthDraft>(() => emptyDailyHealthDraft())
@@ -1681,7 +1684,16 @@ export default function App() {
       nutrition_source: 'manual',
       steps_source: 'manual',
       synced_at: new Date().toISOString(),
-      provenance: { entry: 'web' },
+      provenance: {
+        entry: 'web',
+        manual_fields: [
+          dailyHealthDraft.calories.trim() && 'calories_kcal',
+          dailyHealthDraft.protein.trim() && 'protein_g',
+          dailyHealthDraft.carbs.trim() && 'carbs_g',
+          dailyHealthDraft.fat.trim() && 'fat_g',
+          dailyHealthDraft.steps.trim() && 'steps',
+        ].filter(Boolean),
+      },
     })
     const weightId = `body-weight-${user.id}-${selected}-manual`
     const weightResult = values.weight === null
@@ -1702,6 +1714,18 @@ export default function App() {
       return
     }
     pushToast('Daily numbers saved.')
+  }
+
+  const createMobilePairing = async () => {
+    if (!supabase || !user || mobilePairingLoading) return
+    setMobilePairingLoading(true)
+    const { data, error } = await supabase.functions.invoke('create-mobile-pairing')
+    setMobilePairingLoading(false)
+    if (error || !data || typeof data.code !== 'string' || typeof data.expiresAt !== 'string' || typeof data.syncUrl !== 'string') {
+      pushToast('Could not create a phone pairing code.')
+      return
+    }
+    setMobilePairing(data as MobilePairing)
   }
 
   const upsertDay = async (date: string, fx: (d0: Day) => Day) => {
@@ -3056,7 +3080,7 @@ export default function App() {
           <div className="stack">
             {([
               { id: 'data', title: 'Data', detail: 'Reset and manage stored app data.' },
-              { id: 'integrations', title: 'Integrations', detail: 'Calendar sync and plan sharing can live here.' },
+              { id: 'integrations', title: 'Integrations', detail: 'Connect Health Connect and other data sources.' },
               { id: 'profile', title: 'Profile', detail: 'Multiple users and personal preferences can live here.' },
             ] as const).map((section) => <button key={section.id} className={settingsSection === section.id ? 'listItem activeItem settingsNavItem' : 'listItem settingsNavItem'} onClick={() => setSettingsSection(section.id)}>
               <strong>{section.title}</strong>
@@ -3089,19 +3113,26 @@ export default function App() {
             </div>
           </>}
           {settingsSection === 'integrations' && <div className="stack">
-            <div><p className="eyebrow">Integrations</p><h2>Coming next</h2></div>
+            <div><p className="eyebrow">Integrations</p><h2>Connected services</h2></div>
+            <div className="card stack">
+              <div>
+                <strong>Android Health Connect</strong>
+                <p>Import MacroFactor nutrition, phone and Pixel Watch steps, and body weight through the companion app.</p>
+              </div>
+              <a className="primary downloadButton" href="/downloads/discipline-plus-sync.apk" download>Download Android helper</a>
+              {mobilePairing ? <div className="pairingCodeBox">
+                <span>Enter this code on your phone</span>
+                <strong>{mobilePairing.code}</strong>
+                <small>Expires at {new Date(mobilePairing.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. It works once.</small>
+              </div> : <p>Create a one-time code after installing the companion app.</p>}
+              <div className="nav">
+                <button className="primary" onClick={createMobilePairing} disabled={mobilePairingLoading || !user}>{mobilePairingLoading ? 'Creating code…' : mobilePairing ? 'Create a new code' : 'Pair Android phone'}</button>
+              </div>
+            </div>
             <div className="card stack">
               <strong>Cloudflare</strong>
               <p>{hasSupabaseEnv ? `Connected backend: ${supabaseUrl}` : 'The Cloudflare backend is not configured in this build.'}</p>
               <span className={hasSupabaseEnv ? 'status' : 'status warn'}>{hasSupabaseEnv ? 'Workers + D1 ready' : 'Backend unavailable'}</span>
-            </div>
-            <div className="card stack">
-              <strong>Calendar integration</strong>
-              <p>Plan export and web-calendar sync can live here when we add it.</p>
-            </div>
-            <div className="card stack">
-              <strong>Plan import / export</strong>
-              <p>This is a natural place for sharing plans across devices or backing them up.</p>
             </div>
           </div>}
           {settingsSection === 'profile' && <div className="stack">

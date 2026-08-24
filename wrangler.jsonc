@@ -28,6 +28,7 @@
     "FRONTEND_ORIGIN": "https://fitness.aparishhouse.com",
     "ACCESS_TEAM_DOMAIN": "frosty-flower-f91d.cloudflareaccess.com",
     "ACCESS_AUD": "8293097271859c1794b56b193352522882583286750fa8eb73d922dc1cc1075b",
+    "MOBILE_SYNC_URL": "https://discipline-plus-sync.bfust27.workers.dev",
     "OPENAI_PLAN_MODEL": "gpt-4.1-mini"
   },
   "observability": {

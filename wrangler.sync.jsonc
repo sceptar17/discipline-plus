@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "discipline-plus-sync",
+  "main": "./worker/mobile-sync.ts",
+  "compatibility_date": "2026-08-24",
+  "workers_dev": true,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "discipline-plus",
+      "database_id": "65768f88-2999-49f0-a5ad-56723e7b7060",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

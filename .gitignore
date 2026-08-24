@@ -14,6 +14,7 @@ dist-ssr
 *.tsbuildinfo
 .dev.vars*
 .wrangler
+.tools
 
 # Editor directories and files
 .vscode/*

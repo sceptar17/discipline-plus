@@ -160,6 +160,18 @@ function normalizeEmail(value: string) {
   return value.trim().toLowerCase()
 }
 
+function randomPairingCode() {
+  const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const bytes = crypto.getRandomValues(new Uint8Array(12))
+  const raw = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('')
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 async function matchesAllowedEmail(email: string, allowedEmail: string) {
   const encoder = new TextEncoder()
   const [emailHash, allowedHash] = await Promise.all([
@@ -437,6 +449,21 @@ async function analyzePlanSheet(request: Request, env: Env) {
   }
 }
 
+async function createMobilePairing(user: AuthenticatedUser, env: Env) {
+  const code = randomPairingCode()
+  const normalized = code.replace(/-/g, '')
+  const now = new Date()
+  const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString()
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM mobile_pairing_codes WHERE user_id = ? AND used_at IS NULL').bind(user.id),
+    env.DB.prepare(`
+      INSERT INTO mobile_pairing_codes (id, user_id, code_hash, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(crypto.randomUUID(), user.id, await sha256Hex(normalized), expiresAt, now.toISOString()),
+  ])
+  return json({ code, expiresAt, syncUrl: env.MOBILE_SYNC_URL })
+}
+
 async function handleApi(request: Request, env: Env) {
   const url = new URL(request.url)
   const user = await authenticate(request, env)
@@ -461,6 +488,7 @@ async function handleApi(request: Request, env: Env) {
   }
   if (request.method === 'POST' && url.pathname === '/api/database') return handleDatabase(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/analyze-plan-sheet') return analyzePlanSheet(request, env)
+  if (request.method === 'POST' && url.pathname === '/api/functions/create-mobile-pairing') return createMobilePairing(user, env)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, database: 'D1', user: user.email })
   throw new HttpError(404, 'Not found.')
 }
