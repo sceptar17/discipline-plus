@@ -1056,6 +1056,138 @@
   text-align: right;
 }
 
+.coachReviewCard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid rgba(243, 107, 0, 0.28);
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(243, 107, 0, 0.11), rgba(243, 107, 0, 0.025) 46%), var(--surface);
+}
+
+.coachReviewHeading,
+.coachComposer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.coachReviewHeading .eyebrow {
+  margin-bottom: 4px;
+}
+
+.coachReviewEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.coachReviewEmpty p,
+.coachConversation > div:first-child p {
+  color: var(--text-muted);
+}
+
+.submitReviewButton {
+  width: 100%;
+  min-height: 52px;
+  font-size: 1rem;
+}
+
+.coachReviewBody,
+.coachReviewSections,
+.coachConversation,
+.coachMessages {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.coachReviewBody h4 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.coachReviewBody p,
+.coachReviewSections p,
+.coachConversation p,
+.coachActions ul {
+  margin: 5px 0 0;
+  line-height: 1.55;
+}
+
+.coachReviewSections {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.coachActions ul {
+  padding-left: 1.2rem;
+}
+
+.coachExerciseRecommendations {
+  border-top: 1px solid var(--border);
+  padding-top: 13px;
+}
+
+.coachExerciseRecommendations summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.coachExerciseRecommendations small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.coachRefreshButton {
+  align-self: flex-start;
+}
+
+.coachConversation {
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.coachMessage {
+  max-width: 92%;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.coachMessage.user {
+  align-self: flex-end;
+  background: rgba(243, 107, 0, 0.14);
+}
+
+.coachMessage span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.coachMessage p {
+  white-space: pre-wrap;
+}
+
+.coachComposer textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.coachComposer button {
+  min-height: 48px;
+}
+
 .targetRow {
   display: flex;
   align-items: end;
@@ -1806,5 +1938,18 @@ textarea:focus-visible {
   .dailyHealthActions p {
     max-width: none;
     text-align: left;
+  }
+
+  .coachReviewCard {
+    padding: 18px;
+  }
+
+  .coachComposer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .coachComposer button {
+    width: 100%;
   }
 }

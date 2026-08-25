@@ -94,6 +94,11 @@ function apiUrl(path: string) {
   return `${apiOrigin}${path}`
 }
 
+export async function loadCoachDay(date: string) {
+  const response = await fetch(apiUrl(`/api/coach/day?date=${encodeURIComponent(date)}`), { credentials: 'include' })
+  return parseResponse(response) as Promise<{ review?: unknown; messages?: unknown[] } | null>
+}
+
 function clientError(message: string, context?: Response): ClientError {
   const error = new Error(message) as ClientError
   error.context = context

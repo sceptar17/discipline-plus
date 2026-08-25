@@ -36,6 +36,14 @@ type AnalyzeRequest = {
   catalog?: Array<{ name?: string; kind?: TrackableKind; category?: string; defaultType?: TargetType }>
 }
 
+type DailyReviewRequest = { date?: unknown }
+type CoachMessageRequest = { date?: unknown; message?: unknown }
+type OpenAIResponse = {
+  id?: string
+  output_text?: string
+  output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
+}
+
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
     super(message)
@@ -150,6 +158,31 @@ function withCors(response: Response, request: Request, env: Env) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function requireDate(value: unknown) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new HttpError(400, 'A valid date is required.')
+  }
+  return value
+}
+
+function parseStoredJson(value: unknown) {
+  if (typeof value !== 'string') return value ?? null
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
+}
+
+function responseText(response: OpenAIResponse) {
+  if (response.output_text?.trim()) return response.output_text.trim()
+  return response.output?.flatMap((item) => item.content ?? [])
+    .filter((item) => item.type === 'output_text' && typeof item.text === 'string')
+    .map((item) => item.text?.trim())
+    .filter(Boolean)
+    .join('\n') ?? ''
 }
 
 function isTableName(value: unknown): value is TableName {
@@ -449,6 +482,324 @@ async function analyzePlanSheet(request: Request, env: Env) {
   }
 }
 
+type WorkoutRow = {
+  date: string
+  day_notes: string | null
+  skipped: number | null
+  day_no: number | null
+  plan_name: string | null
+  run_name: string | null
+  exercise_id: string | null
+  exercise_name: string | null
+  exercise_kind: string | null
+  target: string | null
+  result: string | null
+  done: number | null
+}
+
+async function workoutForDate(userId: string, date: string, env: Env) {
+  const result = await env.DB.prepare(`
+    SELECT sd.date, sd.notes AS day_notes, sd.skipped, sd.day_no,
+      p.name AS plan_name, r.name AS run_name,
+      e.id AS exercise_id, e.name AS exercise_name, e.kind AS exercise_kind,
+      si.target, si.result, si.done
+    FROM schedule_days sd
+    LEFT JOIN runs r ON r.id = sd.run_id AND r.user_id = sd.user_id
+    LEFT JOIN plans p ON p.id = r.plan_id AND p.user_id = sd.user_id
+    LEFT JOIN schedule_items si ON si.schedule_day_id = sd.id AND si.user_id = sd.user_id
+    LEFT JOIN exercises e ON e.id = si.exercise_id AND e.user_id = sd.user_id
+    WHERE sd.user_id = ? AND sd.date = ?
+    ORDER BY si.created_at ASC
+  `).bind(userId, date).all<WorkoutRow>()
+  const first = result.results[0]
+  return {
+    date,
+    plan: first?.plan_name ?? first?.run_name ?? null,
+    dayNumber: first?.day_no ?? null,
+    notes: first?.day_notes ?? '',
+    skipped: first?.skipped === 1,
+    items: result.results.filter((row) => row.exercise_id).map((row) => ({
+      exerciseId: row.exercise_id,
+      exercise: row.exercise_name,
+      kind: row.exercise_kind,
+      target: parseStoredJson(row.target),
+      result: parseStoredJson(row.result),
+      done: row.done === 1,
+    })),
+  }
+}
+
+function average(values: Array<number | null | undefined>) {
+  const present = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  if (!present.length) return null
+  return Math.round((present.reduce((total, value) => total + value, 0) / present.length) * 10) / 10
+}
+
+async function buildDailyReviewContext(user: AuthenticatedUser, date: string, env: Env) {
+  const todayWorkout = await workoutForDate(user.id, date, env)
+  const health = await env.DB.prepare(`
+    SELECT date, calories_kcal, protein_g, carbs_g, fat_g, steps, nutrition_source, steps_source
+    FROM daily_health
+    WHERE user_id = ? AND date BETWEEN date(?, '-13 days') AND ?
+    ORDER BY date ASC
+  `).bind(user.id, date, date).all<Record<string, unknown>>()
+  const weights = await env.DB.prepare(`
+    SELECT local_date, weight_lb, source, measured_at
+    FROM body_weight_entries
+    WHERE user_id = ? AND local_date BETWEEN date(?, '-27 days') AND ?
+    ORDER BY local_date ASC, measured_at DESC
+  `).bind(user.id, date, date).all<{ local_date: string; weight_lb: number; source: string; measured_at: string }>()
+  const profile = await env.DB.prepare(`
+    SELECT goal_name, start_weight_lb, height_inches, target_weight_lb,
+      desired_loss_min_lb, desired_loss_max_lb, targets, equipment, calorie_context, coaching_style
+    FROM coaching_profiles WHERE user_id = ?
+  `).bind(user.id).first<Record<string, unknown>>()
+  const notes = await env.DB.prepare(`
+    SELECT category, title, body, priority, exercise_id
+    FROM coaching_notes WHERE user_id = ? AND status = 'active'
+    ORDER BY priority DESC, created_at ASC
+  `).bind(user.id).all<Record<string, unknown>>()
+  const previousLogs = todayWorkout.items.length ? await env.DB.prepare(`
+    SELECT l.exercise_id, e.name AS exercise_name, l.date, l.type, l.target, l.result
+    FROM logs l
+    JOIN exercises e ON e.id = l.exercise_id AND e.user_id = l.user_id
+    WHERE l.user_id = ? AND l.date < ? AND l.exercise_id IN (${todayWorkout.items.map(() => '?').join(', ')})
+    ORDER BY l.date DESC, l.updated_at DESC
+  `).bind(user.id, date, ...todayWorkout.items.map((item) => item.exerciseId)).all<Record<string, unknown>>() : { results: [] }
+  const latestByExercise = new Map<string, Record<string, unknown>>()
+  previousLogs.results.forEach((row) => {
+    const exerciseId = String(row.exercise_id)
+    if (!latestByExercise.has(exerciseId)) latestByExercise.set(exerciseId, {
+      exerciseId,
+      exercise: row.exercise_name,
+      date: row.date,
+      type: row.type,
+      target: parseStoredJson(row.target),
+      result: parseStoredJson(row.result),
+    })
+  })
+  const nextDay = await env.DB.prepare(`
+    SELECT date FROM schedule_days
+    WHERE user_id = ? AND date > ?
+    ORDER BY date ASC LIMIT 1
+  `).bind(user.id, date).first<{ date: string }>()
+  const tomorrow = nextDay ? await workoutForDate(user.id, nextDay.date, env) : null
+  const recentReviews = await env.DB.prepare(`
+    SELECT date, headline, structured_review
+    FROM daily_reviews WHERE user_id = ? AND date < ?
+    ORDER BY date DESC LIMIT 3
+  `).bind(user.id, date).all<{ date: string; headline: string; structured_review: string }>()
+
+  const healthRows = health.results.map((row) => ({
+    date: row.date,
+    calories: row.calories_kcal,
+    protein: row.protein_g,
+    carbs: row.carbs_g,
+    fat: row.fat_g,
+    steps: row.steps,
+  }))
+  const oneWeightPerDay = new Map<string, number>()
+  weights.results.forEach((row) => {
+    if (!oneWeightPerDay.has(row.local_date) || row.source === 'manual') oneWeightPerDay.set(row.local_date, row.weight_lb)
+  })
+  const weightRows = Array.from(oneWeightPerDay, ([localDate, weight]) => ({ date: localDate, weight }))
+  const last7Start = new Date(`${date}T12:00:00Z`)
+  last7Start.setUTCDate(last7Start.getUTCDate() - 6)
+  const startKey = last7Start.toISOString().slice(0, 10)
+  const last7Health = healthRows.filter((row) => String(row.date) >= startKey)
+  const last7Weight = weightRows.filter((row) => row.date >= startKey)
+  return {
+    reviewDate: date,
+    today: {
+      workout: todayWorkout,
+      health: healthRows.find((row) => row.date === date) ?? null,
+      weight: weightRows.find((row) => row.date === date)?.weight ?? null,
+    },
+    previousPerformance: Array.from(latestByExercise.values()),
+    recent14Days: { health: healthRows, weight: weightRows },
+    sevenDayAverages: {
+      calories: average(last7Health.map((row) => row.calories as number | null)),
+      protein: average(last7Health.map((row) => row.protein as number | null)),
+      steps: average(last7Health.map((row) => row.steps as number | null)),
+      weight: average(last7Weight.map((row) => row.weight)),
+      daysWithNutrition: last7Health.filter((row) => typeof row.calories === 'number').length,
+      weighIns: last7Weight.length,
+    },
+    goals: profile ? {
+      name: profile.goal_name,
+      startWeightLb: profile.start_weight_lb,
+      heightInches: profile.height_inches,
+      targetWeightLb: profile.target_weight_lb,
+      desiredLossLbPerWeek: [profile.desired_loss_min_lb, profile.desired_loss_max_lb],
+      targets: parseStoredJson(profile.targets),
+      equipment: profile.equipment,
+      calorieContext: profile.calorie_context,
+      coachingStyle: parseStoredJson(profile.coaching_style),
+    } : null,
+    persistentNotes: notes.results.map((note) => ({ ...note })),
+    nextScheduledDay: tomorrow,
+    recentReviews: recentReviews.results.map((review) => ({
+      date: review.date,
+      headline: review.headline,
+      recommendations: parseStoredJson(review.structured_review),
+    })),
+  }
+}
+
+const dailyReviewSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['headline', 'overall', 'training', 'nutrition', 'trends', 'tomorrow', 'action_items', 'exercise_recommendations'],
+  properties: {
+    headline: { type: 'string' },
+    overall: { type: 'string' },
+    training: { type: 'string' },
+    nutrition: { type: 'string' },
+    trends: { type: 'string' },
+    tomorrow: { type: 'string' },
+    action_items: { type: 'array', items: { type: 'string' } },
+    exercise_recommendations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['exercise', 'recommendation', 'reason'],
+        properties: {
+          exercise: { type: 'string' },
+          recommendation: { type: 'string' },
+          reason: { type: 'string' },
+        },
+      },
+    },
+  },
+} as const
+
+const coachInstructions = [
+  'You are the user\'s ongoing fitness coach for a 60-day cut/recomposition program.',
+  'Be concise but substantive. Respond to the actual record and do not manufacture problems or hypothetical extremes.',
+  'Use longitudinal evidence: compare exercise performance, use 7-day weight averages, and consider the last 1-2 weeks before recommending changes.',
+  'For lifting, prefer adding clean reps within the range before load unless the evidence supports increasing load.',
+  'Do not treat exercise calorie estimates as calories to eat back. Account for the stated food-logging undercount context.',
+  'Recognize progress without cheerleading. Give specific next-session recommendations and say when the evidence is insufficient.',
+  'Respect every active safety/modification note. Do not diagnose; calmly flag genuine injury or safety concerns when supported by the record.',
+].join(' ')
+
+async function callOpenAI(body: Record<string, unknown>, env: Env) {
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    console.error(JSON.stringify({ message: 'OpenAI coach request failed', status: response.status }))
+    throw new HttpError(502, 'The coach could not complete the review. Please try again.')
+  }
+  return response.json<OpenAIResponse>()
+}
+
+function reviewText(review: Record<string, unknown>) {
+  const actions = Array.isArray(review.action_items) ? review.action_items.map((item) => `• ${item}`).join('\n') : ''
+  const sections = [review.overall, review.training, review.nutrition, review.trends, review.tomorrow]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+  return [...sections, actions].filter(Boolean).join('\n\n')
+}
+
+async function submitDailyReview(request: Request, user: AuthenticatedUser, env: Env) {
+  const body = await request.json<DailyReviewRequest>()
+  const date = requireDate(body.date)
+  const context = await buildDailyReviewContext(user, date, env)
+  const model = env.OPENAI_COACH_MODEL || 'gpt-5.4-mini'
+  const response = await callOpenAI({
+    model,
+    store: false,
+    reasoning: { effort: 'low' },
+    max_output_tokens: 1800,
+    instructions: `${coachInstructions} Produce a daily review using the supplied JSON context. The tomorrow field must identify the next scheduled day, including its date, or clearly say none is scheduled.`,
+    input: JSON.stringify(context),
+    text: { format: { type: 'json_schema', name: 'daily_fitness_review', strict: true, schema: dailyReviewSchema } },
+  }, env)
+  const content = responseText(response)
+  if (!content) throw new HttpError(502, 'The coach returned an empty review.')
+  let structured: Record<string, unknown>
+  try {
+    structured = JSON.parse(content) as Record<string, unknown>
+  } catch {
+    throw new HttpError(502, 'The coach returned an invalid review.')
+  }
+  const reviewId = `daily-review-${user.id}-${date}`
+  await env.DB.prepare(`
+    INSERT INTO daily_reviews
+      (id, user_id, date, model, headline, review_text, structured_review, context_snapshot, openai_response_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, date) DO UPDATE SET
+      model = excluded.model, headline = excluded.headline, review_text = excluded.review_text,
+      structured_review = excluded.structured_review, context_snapshot = excluded.context_snapshot,
+      openai_response_id = excluded.openai_response_id,
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  `).bind(reviewId, user.id, date, model, String(structured.headline || 'Daily review'), reviewText(structured), JSON.stringify(structured), JSON.stringify(context), response.id ?? null).run()
+  return json({ review: { id: reviewId, date, model, ...structured, reviewText: reviewText(structured) } })
+}
+
+async function getDailyCoach(date: string, user: AuthenticatedUser, env: Env) {
+  const review = await env.DB.prepare(`
+    SELECT id, date, model, headline, review_text, structured_review, created_at, updated_at
+    FROM daily_reviews WHERE user_id = ? AND date = ?
+  `).bind(user.id, date).first<Record<string, unknown>>()
+  if (!review) return json({ review: null, messages: [] })
+  const messages = await env.DB.prepare(`
+    SELECT id, role, content, created_at FROM coach_messages
+    WHERE user_id = ? AND review_id = ? ORDER BY created_at ASC
+  `).bind(user.id, review.id).all<Record<string, unknown>>()
+  return json({
+    review: { ...review, structured_review: parseStoredJson(review.structured_review) },
+    messages: messages.results,
+  })
+}
+
+async function sendCoachMessage(request: Request, user: AuthenticatedUser, env: Env) {
+  const body = await request.json<CoachMessageRequest>()
+  const date = requireDate(body.date)
+  if (typeof body.message !== 'string' || !body.message.trim() || body.message.length > 4000) {
+    throw new HttpError(400, 'Enter a message up to 4,000 characters.')
+  }
+  const review = await env.DB.prepare(`
+    SELECT id, structured_review, context_snapshot FROM daily_reviews
+    WHERE user_id = ? AND date = ?
+  `).bind(user.id, date).first<{ id: string; structured_review: string; context_snapshot: string }>()
+  if (!review) throw new HttpError(404, 'Submit this day for review before chatting with the coach.')
+  const history = await env.DB.prepare(`
+    SELECT role, content FROM coach_messages
+    WHERE user_id = ? AND review_id = ? ORDER BY created_at DESC LIMIT 12
+  `).bind(user.id, review.id).all<{ role: 'user' | 'assistant'; content: string }>()
+  const input = [
+    { role: 'developer', content: `Daily review: ${review.structured_review}\nRelevant saved context: ${review.context_snapshot}` },
+    ...history.results.reverse().map((message) => ({ role: message.role, content: message.content })),
+    { role: 'user', content: body.message.trim() },
+  ]
+  const model = env.OPENAI_COACH_MODEL || 'gpt-5.4-mini'
+  const response = await callOpenAI({
+    model,
+    store: false,
+    reasoning: { effort: 'low' },
+    max_output_tokens: 1000,
+    instructions: `${coachInstructions} Answer the follow-up question directly using the saved daily review and context.`,
+    input,
+    text: { verbosity: 'low' },
+  }, env)
+  const answer = responseText(response)
+  if (!answer) throw new HttpError(502, 'The coach returned an empty answer.')
+  const now = new Date().toISOString()
+  const userMessage = { id: crypto.randomUUID(), role: 'user', content: body.message.trim(), created_at: now }
+  const coachMessage = { id: crypto.randomUUID(), role: 'assistant', content: answer, created_at: new Date(Date.now() + 1).toISOString() }
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO coach_messages (id, user_id, review_id, date, role, content, created_at) VALUES (?, ?, ?, ?, 'user', ?, ?)`)
+      .bind(userMessage.id, user.id, review.id, date, userMessage.content, userMessage.created_at),
+    env.DB.prepare(`INSERT INTO coach_messages (id, user_id, review_id, date, role, content, openai_response_id, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, ?, ?)`)
+      .bind(coachMessage.id, user.id, review.id, date, answer, response.id ?? null, coachMessage.created_at),
+  ])
+  return json({ messages: [userMessage, coachMessage] })
+}
+
 async function createMobilePairing(user: AuthenticatedUser, env: Env) {
   const code = randomPairingCode()
   const normalized = code.replace(/-/g, '')
@@ -489,6 +840,9 @@ async function handleApi(request: Request, env: Env) {
   if (request.method === 'POST' && url.pathname === '/api/database') return handleDatabase(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/analyze-plan-sheet') return analyzePlanSheet(request, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/create-mobile-pairing') return createMobilePairing(user, env)
+  if (request.method === 'POST' && url.pathname === '/api/functions/submit-daily-review') return submitDailyReview(request, user, env)
+  if (request.method === 'POST' && url.pathname === '/api/functions/coach-message') return sendCoachMessage(request, user, env)
+  if (request.method === 'GET' && url.pathname === '/api/coach/day') return getDailyCoach(requireDate(url.searchParams.get('date')), user, env)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, database: 'D1', user: user.email })
   throw new HttpError(404, 'Not found.')
 }

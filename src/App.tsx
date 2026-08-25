@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import type { User } from './lib/cloudflare'
 import * as XLSX from 'xlsx'
 import './App.css'
-import { hasSupabaseEnv, supabase, supabaseUrl } from './lib/cloudflare'
+import { hasSupabaseEnv, loadCoachDay, supabase, supabaseUrl } from './lib/cloudflare'
 
 type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
@@ -29,6 +29,21 @@ type Toast = { id: string; message: string }
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
 type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
 type MobilePairing = { code: string; expiresAt: string; syncUrl: string }
+type ExerciseRecommendation = { exercise: string; recommendation: string; reason: string }
+type DailyReview = {
+  id: string
+  date: string
+  model: string
+  headline: string
+  overall: string
+  training: string
+  nutrition: string
+  trends: string
+  tomorrow: string
+  action_items: string[]
+  exercise_recommendations: ExerciseRecommendation[]
+}
+type CoachMessage = { id: string; role: 'user' | 'assistant'; content: string; created_at: string }
 type WorkbookPreview = { fileName: string; sheets: Array<{ name: string; rows: string[][] }> }
 type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: string; defaultType: TT; progressMetric: PM; usedOnDays: string[] }
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
@@ -129,6 +144,29 @@ const emptyDailyHealthDraft = (): DailyHealthDraft => ({ calories: '', protein: 
 const parseOptionalNumber = (value: string) => {
   const parsed = parseNumberInput(value)
   return parsed !== undefined && Number.isFinite(parsed) ? parsed : null
+}
+const dailyReviewFromPayload = (payload: unknown): DailyReview | null => {
+  if (!payload || typeof payload !== 'object') return null
+  const row = payload as Record<string, unknown>
+  const structured = row.structured_review && typeof row.structured_review === 'object'
+    ? row.structured_review as Record<string, unknown>
+    : row
+  const recommendations = Array.isArray(structured.exercise_recommendations)
+    ? structured.exercise_recommendations.filter((item): item is ExerciseRecommendation => Boolean(item) && typeof item === 'object' && typeof (item as ExerciseRecommendation).exercise === 'string')
+    : []
+  return {
+    id: String(row.id ?? ''),
+    date: String(row.date ?? ''),
+    model: String(row.model ?? ''),
+    headline: String(structured.headline ?? row.headline ?? 'Daily review'),
+    overall: String(structured.overall ?? ''),
+    training: String(structured.training ?? ''),
+    nutrition: String(structured.nutrition ?? ''),
+    trends: String(structured.trends ?? ''),
+    tomorrow: String(structured.tomorrow ?? ''),
+    action_items: Array.isArray(structured.action_items) ? structured.action_items.map(String) : [],
+    exercise_recommendations: recommendations,
+  }
 }
 const parseSetReps = (value: string) => value
   .split(/[\s,/x×-]+/)
@@ -879,6 +917,12 @@ export default function App() {
   const [dailyHealthDraft, setDailyHealthDraft] = useState<DailyHealthDraft>(() => emptyDailyHealthDraft())
   const [dailyHealthLoading, setDailyHealthLoading] = useState(false)
   const [dailyHealthSaving, setDailyHealthSaving] = useState(false)
+  const [dailyReview, setDailyReview] = useState<DailyReview | null>(null)
+  const [coachMessages, setCoachMessages] = useState<CoachMessage[]>([])
+  const [dailyReviewLoading, setDailyReviewLoading] = useState(false)
+  const [dailyReviewSubmitting, setDailyReviewSubmitting] = useState(false)
+  const [coachDraft, setCoachDraft] = useState('')
+  const [coachSending, setCoachSending] = useState(false)
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, boolean>>({})
   const [expandedPlanItems, setExpandedPlanItems] = useState<Record<string, boolean>>({})
   const [draggedPlanDayId, setDraggedPlanDayId] = useState<string | null>(null)
@@ -1006,6 +1050,30 @@ export default function App() {
       setDailyHealthLoading(false)
     }
     void loadDailyHealth()
+    return () => { active = false }
+  }, [selected, user])
+  useEffect(() => {
+    if (!user) {
+      setDailyReview(null)
+      setCoachMessages([])
+      return
+    }
+    let active = true
+    setDailyReviewLoading(true)
+    setCoachDraft('')
+    loadCoachDay(selected).then((payload) => {
+      if (!active) return
+      setDailyReview(dailyReviewFromPayload(payload?.review))
+      setCoachMessages(Array.isArray(payload?.messages) ? payload.messages.filter((message): message is CoachMessage => Boolean(message) && typeof message === 'object' && ((message as CoachMessage).role === 'user' || (message as CoachMessage).role === 'assistant')) : [])
+    }).catch((error) => {
+      console.error('daily coach load failed', error)
+      if (active) {
+        setDailyReview(null)
+        setCoachMessages([])
+      }
+    }).finally(() => {
+      if (active) setDailyReviewLoading(false)
+    })
     return () => { active = false }
   }, [selected, user])
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
@@ -1714,6 +1782,39 @@ export default function App() {
       return
     }
     pushToast('Daily numbers saved.')
+  }
+
+  const submitDailyReview = async () => {
+    if (!supabase || !user || dailyReviewSubmitting) return
+    setDailyReviewSubmitting(true)
+    const { data, error } = await supabase.functions.invoke('submit-daily-review', { body: { date: selected } })
+    setDailyReviewSubmitting(false)
+    const review = dailyReviewFromPayload(data && typeof data === 'object' && 'review' in data ? data.review : null)
+    if (error || !review) {
+      console.error('daily review failed', error)
+      pushToast(error?.message || 'The coach could not review this day.')
+      return
+    }
+    setDailyReview(review)
+    pushToast(dailyReview ? 'Daily review refreshed.' : 'Daily review ready.')
+  }
+
+  const sendCoachMessage = async () => {
+    if (!supabase || !user || !dailyReview || coachSending || !coachDraft.trim()) return
+    const message = coachDraft.trim()
+    setCoachSending(true)
+    const { data, error } = await supabase.functions.invoke('coach-message', { body: { date: selected, message } })
+    setCoachSending(false)
+    const messages = data && typeof data === 'object' && 'messages' in data && Array.isArray(data.messages)
+      ? data.messages.filter((entry: unknown): entry is CoachMessage => Boolean(entry) && typeof entry === 'object')
+      : []
+    if (error || messages.length !== 2) {
+      console.error('coach message failed', error)
+      pushToast(error?.message || 'The coach could not answer right now.')
+      return
+    }
+    setCoachDraft('')
+    setCoachMessages((current) => [...current, ...messages])
   }
 
   const createMobilePairing = async () => {
@@ -2615,6 +2716,36 @@ export default function App() {
               </div>
               <div className="dailyHealthActions"><button className="primary" onClick={() => void saveDailyHealth()} disabled={dailyHealthSaving}>{dailyHealthSaving ? 'Saving...' : 'Save daily numbers'}</button><p>Health Connect values appear here after you sync the Android helper.</p></div>
             </>}
+          </section>
+          <section className="coachReviewCard" aria-labelledby="daily-review-title">
+            <div className="coachReviewHeading">
+              <div><p className="eyebrow">AI coach</p><h3 id="daily-review-title">Daily review</h3></div>
+              {dailyReview && <span className="sourceBadge">Saved</span>}
+            </div>
+            {dailyReviewLoading ? <p className="mutedCopy">Loading your saved review...</p> : dailyReview ? <>
+              <div className="coachReviewBody">
+                <h4>{dailyReview.headline}</h4>
+                {dailyReview.overall && <p>{dailyReview.overall}</p>}
+                <div className="coachReviewSections">
+                  {dailyReview.training && <div><strong>Training</strong><p>{dailyReview.training}</p></div>}
+                  {dailyReview.nutrition && <div><strong>Nutrition & activity</strong><p>{dailyReview.nutrition}</p></div>}
+                  {dailyReview.trends && <div><strong>Trend</strong><p>{dailyReview.trends}</p></div>}
+                  {dailyReview.tomorrow && <div><strong>Next up</strong><p>{dailyReview.tomorrow}</p></div>}
+                </div>
+                {dailyReview.action_items.length > 0 && <div className="coachActions"><strong>Do this next</strong><ul>{dailyReview.action_items.map((action, index) => <li key={`${action}-${index}`}>{action}</li>)}</ul></div>}
+                {dailyReview.exercise_recommendations.length > 0 && <details className="coachExerciseRecommendations"><summary>Exercise recommendations</summary><div className="stack compactStack">{dailyReview.exercise_recommendations.map((recommendation, index) => <div key={`${recommendation.exercise}-${index}`}><strong>{recommendation.exercise}</strong><p>{recommendation.recommendation}</p><small>{recommendation.reason}</small></div>)}</div></details>}
+              </div>
+              <button className="pill coachRefreshButton" onClick={() => void submitDailyReview()} disabled={dailyReviewSubmitting}>{dailyReviewSubmitting ? 'Reviewing...' : 'Refresh review'}</button>
+              <div className="coachConversation">
+                <div><strong>Ask the coach</strong><p>Follow up on this day, a recommendation, or your next session.</p></div>
+                {coachMessages.length > 0 && <div className="coachMessages">{coachMessages.map((message) => <div key={message.id} className={`coachMessage ${message.role}`}><span>{message.role === 'assistant' ? 'Coach' : 'You'}</span><p>{message.content}</p></div>)}</div>}
+                <div className="coachComposer"><textarea rows={2} value={coachDraft} onChange={(event) => setCoachDraft(event.target.value)} placeholder="Ask a follow-up..." maxLength={4000} /><button className="primary" onClick={() => void sendCoachMessage()} disabled={coachSending || !coachDraft.trim()}>{coachSending ? 'Thinking...' : 'Send'}</button></div>
+              </div>
+            </> : <div className="coachReviewEmpty">
+              <p>When the day is ready, the coach will compare it with your recent training, nutrition, activity, weight trend, and saved coaching notes.</p>
+              <button className="primary submitReviewButton" onClick={() => void submitDailyReview()} disabled={dailyReviewSubmitting}>{dailyReviewSubmitting ? 'Reviewing your day...' : 'Submit day for review'}</button>
+              <small>Save any manual daily-number changes first. Workout results are saved as you log them.</small>
+            </div>}
           </section>
           <details className="secondaryTools dayOptions">
             <summary>Day options</summary>
