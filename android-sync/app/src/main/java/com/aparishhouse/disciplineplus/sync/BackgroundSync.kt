@@ -12,18 +12,38 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import java.util.concurrent.TimeUnit
 
 class HealthSyncWorker(appContext: Context, workerParams: WorkerParameters) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
-        if (HealthConnectClient.getSdkStatus(applicationContext) != HealthConnectClient.SDK_AVAILABLE) return Result.success()
+        val engine = HealthSyncEngine(applicationContext)
+        if (!engine.isPaired()) return Result.success()
+        val trigger = inputData.getString("trigger") ?: "background"
+        if (HealthConnectClient.getSdkStatus(applicationContext) != HealthConnectClient.SDK_AVAILABLE) {
+            engine.reportStatus("failed", trigger, "Health Connect is unavailable.", false)
+            return Result.success()
+        }
         val client = HealthConnectClient.getOrCreate(applicationContext)
-        if (!HealthSyncPermissions.backgroundAvailable(client)) return Result.success()
+        if (!HealthSyncPermissions.backgroundAvailable(client)) {
+            engine.reportStatus("missing_permission", trigger, "This phone does not support background Health Connect reads.", false)
+            return Result.success()
+        }
         val granted = runCatching { client.permissionController.getGrantedPermissions() }.getOrDefault(emptySet())
-        if (!granted.containsAll(HealthSyncPermissions.requested(client))) return Result.success()
-        if (!HealthSyncEngine(applicationContext).isPaired()) return Result.success()
-        return runCatching { HealthSyncEngine(applicationContext).sync(lookbackDays = 2) }
-            .fold(onSuccess = { Result.success() }, onFailure = { Result.retry() })
+        val backgroundGranted = HealthSyncPermissions.requested(client).all { it in granted }
+        if (!backgroundGranted) {
+            engine.reportStatus("missing_permission", trigger, "Background Health Connect permission is not enabled.", false)
+            return Result.success()
+        }
+        engine.reportStatus("running", trigger, backgroundPermission = true)
+        return runCatching { engine.sync(lookbackDays = 2, trigger = trigger, backgroundPermission = true) }
+            .fold(
+                onSuccess = { Result.success() },
+                onFailure = {
+                    engine.reportStatus("failed", trigger, it.message, true)
+                    Result.retry()
+                },
+            )
     }
 }
 
@@ -42,13 +62,14 @@ object BackgroundSync {
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             PERIODIC_WORK,
-            ExistingPeriodicWorkPolicy.UPDATE,
+            ExistingPeriodicWorkPolicy.KEEP,
             periodic,
         )
     }
 
     fun syncSoon(context: Context) {
         val immediate = OneTimeWorkRequestBuilder<HealthSyncWorker>()
+            .setInputData(workDataOf("trigger" to "app_open"))
             .setConstraints(networkConstraint)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
             .build()

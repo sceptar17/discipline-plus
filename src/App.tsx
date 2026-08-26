@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import type { User } from './lib/cloudflare'
 import * as XLSX from 'xlsx'
 import './App.css'
-import { hasSupabaseEnv, loadCoachDay, supabase, supabaseUrl } from './lib/cloudflare'
+import { hasSupabaseEnv, loadCoachDay, loadHealthSyncStatus, supabase, supabaseUrl } from './lib/cloudflare'
 
 type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
@@ -29,6 +29,18 @@ type Toast = { id: string; message: string }
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
 type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
 type MobilePairing = { code: string; expiresAt: string; syncUrl: string }
+type MobileSyncStatus = {
+  id: string
+  name: string
+  app_version: string | null
+  last_used_at: string | null
+  last_sync_attempt_at: string | null
+  last_sync_success_at: string | null
+  last_sync_status: string | null
+  last_sync_error: string | null
+  background_permission: boolean
+  last_sync_trigger: string | null
+}
 type ExerciseRecommendation = { exercise: string; recommendation: string; reason: string }
 type DailyReview = {
   id: string
@@ -173,6 +185,24 @@ const dailyReviewFromPayload = (payload: unknown): DailyReview | null => {
     exercise_recommendations: recommendations,
   }
 }
+const mobileSyncStatusFromPayload = (payload: unknown): MobileSyncStatus | null => {
+  if (!payload || typeof payload !== 'object') return null
+  const row = payload as Record<string, unknown>
+  if (typeof row.id !== 'string' || typeof row.name !== 'string') return null
+  return {
+    id: row.id,
+    name: row.name,
+    app_version: typeof row.app_version === 'string' ? row.app_version : null,
+    last_used_at: typeof row.last_used_at === 'string' ? row.last_used_at : null,
+    last_sync_attempt_at: typeof row.last_sync_attempt_at === 'string' ? row.last_sync_attempt_at : null,
+    last_sync_success_at: typeof row.last_sync_success_at === 'string' ? row.last_sync_success_at : null,
+    last_sync_status: typeof row.last_sync_status === 'string' ? row.last_sync_status : null,
+    last_sync_error: typeof row.last_sync_error === 'string' ? row.last_sync_error : null,
+    background_permission: row.background_permission === true,
+    last_sync_trigger: typeof row.last_sync_trigger === 'string' ? row.last_sync_trigger : null,
+  }
+}
+const syncTimeLabel = (value: string | null) => value ? new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Never'
 const parseSetReps = (value: string) => value
   .split(/[\s,/x×-]+/)
   .map((part) => part.trim())
@@ -917,6 +947,8 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('data')
   const [mobilePairing, setMobilePairing] = useState<MobilePairing | null>(null)
   const [mobilePairingLoading, setMobilePairingLoading] = useState(false)
+  const [mobileSyncStatus, setMobileSyncStatus] = useState<MobileSyncStatus | null>(null)
+  const [mobileSyncStatusLoading, setMobileSyncStatusLoading] = useState(false)
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
   const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
   const [dailyHealthDraft, setDailyHealthDraft] = useState<DailyHealthDraft>(() => emptyDailyHealthDraft())
@@ -1057,6 +1089,25 @@ export default function App() {
     void loadDailyHealth()
     return () => { active = false }
   }, [selected, user])
+  useEffect(() => {
+    if (!user) {
+      setMobileSyncStatus(null)
+      return
+    }
+    let active = true
+    setMobileSyncStatusLoading(true)
+    loadHealthSyncStatus().then((payload) => {
+      if (active) setMobileSyncStatus(mobileSyncStatusFromPayload(payload?.device))
+    }).catch((error) => {
+      console.error('mobile sync status load failed', error)
+    }).finally(() => {
+      if (active) setMobileSyncStatusLoading(false)
+    })
+    if (window.location.search.includes('healthSynced=')) {
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`)
+    }
+    return () => { active = false }
+  }, [user])
   useEffect(() => {
     if (!user) {
       setDailyReview(null)
@@ -1840,6 +1891,16 @@ export default function App() {
       return
     }
     setMobilePairing(data as MobilePairing)
+  }
+
+  const launchHealthSync = () => {
+    const fallback = 'https://fitness.aparishhouse.com/downloads/discipline-plus-sync.apk'
+    const android = /Android/i.test(navigator.userAgent)
+    if (!android) {
+      window.location.assign(fallback)
+      return
+    }
+    window.location.assign(`intent://fitness.aparishhouse.com/sync-health#Intent;scheme=https;package=com.aparishhouse.disciplineplus.sync;S.browser_fallback_url=${encodeURIComponent(fallback)};end`)
   }
 
   const upsertDay = async (date: string, fx: (d0: Day) => Day) => {
@@ -2727,7 +2788,20 @@ export default function App() {
                   ['weight', 'Weight', 'lb', 'decimal'],
                 ] as const).map(([field, label, unit, inputMode]) => <label key={field} className="field dailyMetricField"><span>{label}</span><div className="metricInputWrap"><input type="text" inputMode={inputMode} placeholder="—" value={dailyHealthDraft[field]} onChange={(event) => setDailyHealthDraft((current) => ({ ...current, [field]: event.target.value }))} />{unit && <small>{unit}</small>}</div></label>)}
               </div>
-              <div className="dailyHealthActions"><button className="primary" onClick={() => void saveDailyHealth()} disabled={dailyHealthSaving}>{dailyHealthSaving ? 'Saving...' : 'Save daily numbers'}</button><p>Health Connect values appear here after you sync the Android helper.</p></div>
+              <div className="dailyHealthActions">
+                <div className="dailyHealthButtons">
+                  <button className="primary" onClick={() => void saveDailyHealth()} disabled={dailyHealthSaving}>{dailyHealthSaving ? 'Saving...' : 'Save daily numbers'}</button>
+                  <button className="pill syncHealthButton" onClick={launchHealthSync}>Sync health data</button>
+                </div>
+                <div className="syncStatusSummary">
+                  {mobileSyncStatusLoading ? <p>Checking phone sync...</p> : mobileSyncStatus ? <>
+                    <p><strong>Last health sync:</strong> {syncTimeLabel(mobileSyncStatus.last_sync_success_at ?? mobileSyncStatus.last_used_at)}</p>
+                    {mobileSyncStatus.last_sync_status === 'missing_permission' && <p className="syncWarning">Automatic access needs attention in the helper.</p>}
+                    {mobileSyncStatus.last_sync_status === 'failed' && <p className="syncWarning">Last attempt failed{mobileSyncStatus.last_sync_error ? `: ${mobileSyncStatus.last_sync_error}` : '.'}</p>}
+                    {mobileSyncStatus.app_version && <small>{mobileSyncStatus.name} · Helper {mobileSyncStatus.app_version} · {mobileSyncStatus.background_permission ? 'Background access on' : 'Background access not confirmed'}</small>}
+                  </> : <p>Pair the Android helper to sync Health Connect.</p>}
+                </div>
+              </div>
             </>}
           </section>
           <section className="coachReviewCard" aria-labelledby="daily-review-title">
@@ -3263,7 +3337,12 @@ export default function App() {
                 <strong>Android Health Connect</strong>
                 <p>Automatically import MacroFactor nutrition, phone and Pixel Watch steps, and body weight about hourly through the companion app.</p>
               </div>
-              <a className="primary downloadButton" href="/downloads/discipline-plus-sync.apk" download>Download Android helper</a>
+              <a className="primary downloadButton" href="/downloads/discipline-plus-sync.apk" download>Install Android helper 1.2</a>
+              {mobileSyncStatus && <div className="syncStatusSummary settingsSyncStatus">
+                <p><strong>Last successful sync:</strong> {syncTimeLabel(mobileSyncStatus.last_sync_success_at ?? mobileSyncStatus.last_used_at)}</p>
+                <small>{mobileSyncStatus.app_version ? `Installed helper last reported version ${mobileSyncStatus.app_version}.` : 'Install version 1.2, then open it once to enable diagnostics and one-tap sync.'}</small>
+                {mobileSyncStatus.last_sync_error && <p className="syncWarning">{mobileSyncStatus.last_sync_error}</p>}
+              </div>}
               {mobilePairing ? <div className="pairingCodeBox">
                 <span>Enter this code on your phone</span>
                 <strong>{mobilePairing.code}</strong>

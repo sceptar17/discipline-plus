@@ -15,7 +15,8 @@ type WeightInput = {
   sourcePackage?: unknown
 }
 type DayInput = { date?: unknown; nutrition?: unknown; steps?: unknown; weight?: unknown }
-type SyncRequest = { timezone?: unknown; days?: unknown }
+type SyncRequest = { timezone?: unknown; days?: unknown; trigger?: unknown; appVersion?: unknown; backgroundPermission?: unknown }
+type StatusRequest = { status?: unknown; error?: unknown; trigger?: unknown; appVersion?: unknown; backgroundPermission?: unknown }
 
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
@@ -122,6 +123,41 @@ function sourceName(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : fallback
 }
 
+function syncTrigger(value: unknown) {
+  return value === 'background' || value === 'web' || value === 'app_open' ? value : 'manual'
+}
+
+function appVersion(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 40) : null
+}
+
+function backgroundPermission(value: unknown) {
+  return typeof value === 'boolean' ? (value ? 1 : 0) : null
+}
+
+async function reportStatus(request: Request, env: SyncEnv) {
+  const device = await authenticateDevice(request, env)
+  const body = await request.json<StatusRequest>()
+  const allowedStatuses = new Set(['scheduled', 'running', 'missing_permission', 'failed'])
+  if (typeof body.status !== 'string' || !allowedStatuses.has(body.status)) {
+    throw new HttpError(400, 'Sync status is invalid.')
+  }
+  const error = typeof body.error === 'string' && body.error.trim() ? body.error.trim().slice(0, 300) : null
+  const now = new Date().toISOString()
+  await env.DB.prepare(`
+    UPDATE mobile_devices SET
+      app_version = COALESCE(?, app_version),
+      last_sync_attempt_at = ?,
+      last_sync_status = ?,
+      last_sync_error = ?,
+      background_permission = COALESCE(?, background_permission),
+      last_sync_trigger = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).bind(appVersion(body.appVersion), now, body.status, error, backgroundPermission(body.backgroundPermission), syncTrigger(body.trigger), now, device.id).run()
+  return json({ ok: true, recordedAt: now })
+}
+
 async function sync(request: Request, env: SyncEnv) {
   const device = await authenticateDevice(request, env)
   const body = await request.json<SyncRequest>()
@@ -216,7 +252,22 @@ async function sync(request: Request, env: SyncEnv) {
       ))
     }
   }
-  statements.push(env.DB.prepare('UPDATE mobile_devices SET last_used_at = ?, updated_at = ? WHERE id = ?').bind(now, now, device.id))
+  statements.push(env.DB.prepare(`
+    UPDATE mobile_devices SET
+      last_used_at = ?,
+      last_sync_attempt_at = ?,
+      last_sync_success_at = ?,
+      last_sync_status = 'success',
+      last_sync_error = NULL,
+      app_version = COALESCE(?, app_version),
+      background_permission = COALESCE(?, background_permission),
+      last_sync_trigger = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).bind(
+    now, now, now, appVersion(body.appVersion), backgroundPermission(body.backgroundPermission),
+    syncTrigger(body.trigger), now, device.id,
+  ))
   const results = await env.DB.batch(statements)
   if (!results.every((entry) => entry.success)) throw new HttpError(500, 'Health Connect data could not be saved.')
   return json({ ok: true, daysSaved: body.days.length, syncedAt: now })
@@ -229,6 +280,7 @@ export default {
       if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true })
       if (request.method === 'POST' && url.pathname === '/pair') return await pair(request, env)
       if (request.method === 'POST' && url.pathname === '/sync') return await sync(request, env)
+      if (request.method === 'POST' && url.pathname === '/status') return await reportStatus(request, env)
       throw new HttpError(404, 'Not found.')
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500

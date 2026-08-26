@@ -3,6 +3,7 @@ package com.aparishhouse.disciplineplus.sync
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -35,11 +36,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var syncStatus: TextView
     private lateinit var requestButton: Button
     private lateinit var syncButton: Button
+    private var pendingWebSync = false
+    private var handledSyncIntent = false
 
     private val permissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
     ) {
         refreshPermissionStatus()
+        if (pendingWebSync) syncFromWebsite()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,6 +52,14 @@ class MainActivity : ComponentActivity() {
         buildScreen()
         initializeHealthConnect()
         refreshPairingStatus()
+        handleSyncIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handledSyncIntent = false
+        handleSyncIntent(intent)
     }
 
     override fun onResume() {
@@ -103,7 +115,7 @@ class MainActivity : ComponentActivity() {
 
         page.addView(card().apply {
             addView(label("3  Automatic sync", 20f, R.color.ink, true))
-            addView(label("Runs about hourly and whenever this helper opens, importing today and the previous 14 days. Website entries you typed manually stay in control.", 15f, R.color.muted).withMargins(bottom = 12))
+            addView(label("Runs about hourly and whenever this helper opens. Automatic runs refresh today and the prior two days; Sync now refreshes the prior 14 days. Website entries you typed manually stay in control.", 15f, R.color.muted).withMargins(bottom = 12))
             syncButton = actionButton("Sync now") { syncNow() }
             addView(syncButton)
             syncStatus = label("Automatic sync has not run yet", 14f, R.color.muted).withMargins(top = 10)
@@ -191,12 +203,64 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 val granted = client.permissionController.getGrantedPermissions()
                 if (!granted.containsAll(HealthSyncPermissions.data)) error("Allow nutrition, steps, and weight first.")
-                syncEngine.sync()
+                val backgroundReady = HealthSyncPermissions.backgroundAvailable(client) &&
+                    HealthSyncPermissions.requested(client).all { it in granted }
+                syncEngine.sync(trigger = "manual", backgroundPermission = backgroundReady)
             }.onSuccess {
                 refreshSyncStatus()
             }.onFailure { syncStatus.text = friendlyError(it) }
             refreshButtons()
         }
+    }
+
+    private fun handleSyncIntent(intent: Intent?) {
+        if (handledSyncIntent || intent?.action != Intent.ACTION_VIEW || intent.data?.path != "/sync-health") return
+        handledSyncIntent = true
+        pendingWebSync = true
+        syncFromWebsite()
+    }
+
+    private fun syncFromWebsite() {
+        if (!pendingWebSync) return
+        val client = healthClient ?: run {
+            syncStatus.text = "Health Connect is unavailable."
+            return
+        }
+        if (!syncEngine.isPaired()) {
+            syncStatus.text = "Pair this phone before syncing from the website."
+            return
+        }
+        syncButton.isEnabled = false
+        syncStatus.text = "Syncing health data for the websiteâ€¦"
+        scope.launch {
+            val granted = runCatching { client.permissionController.getGrantedPermissions() }.getOrDefault(emptySet())
+            if (!granted.containsAll(HealthSyncPermissions.data)) {
+                syncStatus.text = "Allow nutrition, steps, and weight to continue."
+                permissionLauncher.launch(HealthSyncPermissions.requested(client))
+                refreshButtons()
+                return@launch
+            }
+            val backgroundReady = HealthSyncPermissions.backgroundAvailable(client) &&
+                HealthSyncPermissions.requested(client).all { it in granted }
+            runCatching {
+                syncEngine.reportStatus("running", "web", backgroundPermission = backgroundReady)
+                syncEngine.sync(lookbackDays = 2, trigger = "web", backgroundPermission = backgroundReady)
+            }.onSuccess {
+                pendingWebSync = false
+                BackgroundSync.schedule(this@MainActivity)
+                returnToWebsite()
+            }.onFailure {
+                syncEngine.reportStatus("failed", "web", it.message, backgroundReady)
+                syncStatus.text = friendlyError(it)
+            }
+            refreshButtons()
+        }
+    }
+
+    private fun returnToWebsite() {
+        val returnUrl = Uri.parse("https://fitness.aparishhouse.com/?healthSynced=${System.currentTimeMillis()}")
+        startActivity(Intent(Intent.ACTION_VIEW, returnUrl).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
+        finish()
     }
 
     private fun refreshSyncStatus() {

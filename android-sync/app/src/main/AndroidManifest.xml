@@ -11,6 +11,7 @@
     </queries>
 
     <application
+        android:name=".SyncApplication"
         android:allowBackup="false"
         android:label="Discipline+ Sync"
         android:supportsRtl="true"
@@ -21,6 +22,15 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="fitness.aparishhouse.com"
+                    android:pathPrefix="/sync-health" />
             </intent-filter>
         </activity>
 

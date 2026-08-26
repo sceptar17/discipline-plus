@@ -1056,6 +1056,44 @@
   text-align: right;
 }
 
+.dailyHealthButtons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.syncHealthButton {
+  min-height: 44px;
+  border-color: rgba(243, 107, 0, 0.36);
+}
+
+.syncStatusSummary {
+  max-width: 430px;
+  text-align: right;
+}
+
+.syncStatusSummary p {
+  max-width: none;
+  margin: 0;
+}
+
+.syncStatusSummary small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.syncStatusSummary .syncWarning {
+  margin-top: 5px;
+  color: #f2b36b;
+}
+
+.settingsSyncStatus {
+  max-width: none;
+  text-align: left;
+}
+
 .coachReviewCard {
   display: flex;
   flex-direction: column;
@@ -1936,6 +1974,16 @@ textarea:focus-visible {
   }
 
   .dailyHealthActions p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .dailyHealthButtons,
+  .dailyHealthButtons button {
+    width: 100%;
+  }
+
+  .syncStatusSummary {
     max-width: none;
     text-align: left;
   }

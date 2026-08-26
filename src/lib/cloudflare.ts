@@ -99,6 +99,11 @@ export async function loadCoachDay(date: string) {
   return parseResponse(response) as Promise<{ review?: unknown; messages?: unknown[] } | null>
 }
 
+export async function loadHealthSyncStatus() {
+  const response = await fetch(apiUrl('/api/health-sync/status'), { credentials: 'include' })
+  return parseResponse(response) as Promise<{ device?: unknown } | null>
+}
+
 function clientError(message: string, context?: Response): ClientError {
   const error = new Error(message) as ClientError
   error.context = context

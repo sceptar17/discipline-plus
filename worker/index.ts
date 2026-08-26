@@ -815,6 +815,17 @@ async function createMobilePairing(user: AuthenticatedUser, env: Env) {
   return json({ code, expiresAt, syncUrl: env.MOBILE_SYNC_URL })
 }
 
+async function getMobileSyncStatus(user: AuthenticatedUser, env: Env) {
+  const device = await env.DB.prepare(`
+    SELECT id, name, app_version, last_used_at, last_sync_attempt_at, last_sync_success_at,
+      last_sync_status, last_sync_error, background_permission, last_sync_trigger, created_at
+    FROM mobile_devices
+    WHERE user_id = ? AND revoked_at IS NULL
+    ORDER BY created_at DESC LIMIT 1
+  `).bind(user.id).first<Record<string, unknown>>()
+  return json({ device: device ? { ...device, background_permission: device.background_permission === 1 } : null })
+}
+
 async function handleApi(request: Request, env: Env) {
   const url = new URL(request.url)
   const user = await authenticate(request, env)
@@ -840,6 +851,7 @@ async function handleApi(request: Request, env: Env) {
   if (request.method === 'POST' && url.pathname === '/api/database') return handleDatabase(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/analyze-plan-sheet') return analyzePlanSheet(request, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/create-mobile-pairing') return createMobilePairing(user, env)
+  if (request.method === 'GET' && url.pathname === '/api/health-sync/status') return getMobileSyncStatus(user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/submit-daily-review') return submitDailyReview(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/coach-message') return sendCoachMessage(request, user, env)
   if (request.method === 'GET' && url.pathname === '/api/coach/day') return getDailyCoach(requireDate(url.searchParams.get('date')), user, env)

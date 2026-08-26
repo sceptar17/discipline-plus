@@ -57,7 +57,7 @@ class HealthSyncEngine(context: Context) {
         tokenStore.save(response.getString("token"))
     }
 
-    suspend fun sync(lookbackDays: Int = 14): String {
+    suspend fun sync(lookbackDays: Int = 14, trigger: String = "manual", backgroundPermission: Boolean? = null): String {
         val token = tokenStore.read() ?: error("Pair this phone first.")
         if (HealthConnectClient.getSdkStatus(appContext) != HealthConnectClient.SDK_AVAILABLE) {
             error("Health Connect is unavailable.")
@@ -70,12 +70,33 @@ class HealthSyncEngine(context: Context) {
         }
         val response = postJson(
             "$syncBaseUrl/sync",
-            JSONObject().put("timezone", zone.id).put("days", days),
+            JSONObject()
+                .put("timezone", zone.id)
+                .put("days", days)
+                .put("trigger", trigger)
+                .put("appVersion", BuildConfig.VERSION_NAME)
+                .putNullable("backgroundPermission", backgroundPermission),
             token,
         )
         val syncedAt = response.optString("syncedAt").takeIf { it.isNotBlank() } ?: Instant.now().toString()
         state.edit().putString("last_sync_at", syncedAt).apply()
         return syncedAt
+    }
+
+    suspend fun reportStatus(status: String, trigger: String, error: String? = null, backgroundPermission: Boolean? = null) {
+        val token = tokenStore.read() ?: return
+        runCatching {
+            postJson(
+                "$syncBaseUrl/status",
+                JSONObject()
+                    .put("status", status)
+                    .put("trigger", trigger)
+                    .put("appVersion", BuildConfig.VERSION_NAME)
+                    .putNullable("error", error?.take(300))
+                    .putNullable("backgroundPermission", backgroundPermission),
+                token,
+            )
+        }
     }
 
     private suspend fun readDay(client: HealthConnectClient, date: LocalDate, zone: ZoneId): JSONObject {

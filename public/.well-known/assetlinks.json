@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.aparishhouse.disciplineplus.sync",
+      "sha256_cert_fingerprints": [
+        "78:CF:78:78:6A:83:43:78:F6:6C:38:5A:2B:BC:B7:77:A5:74:25:0E:11:F9:32:91:A7:DF:34:9A:C0:8D:BD:55"
+      ]
+    }
+  }
+]
