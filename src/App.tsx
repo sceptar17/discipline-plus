@@ -141,9 +141,14 @@ const allowedTypesFromImportedItems = (kind: TK, itemTypes: TT[], defaultType: T
 const parseNumberInput = (value: string) => value.trim() === '' ? undefined : Number(value)
 const numberInputValue = (value?: number) => value ?? ''
 const emptyDailyHealthDraft = (): DailyHealthDraft => ({ calories: '', protein: '', carbs: '', fat: '', steps: '', weight: '' })
+const wholeNumberText = (value: number | null | undefined) => value === null || value === undefined ? '' : String(Math.round(value))
 const parseOptionalNumber = (value: string) => {
   const parsed = parseNumberInput(value)
   return parsed !== undefined && Number.isFinite(parsed) ? parsed : null
+}
+const parseOptionalWholeNumber = (value: string) => {
+  const parsed = parseOptionalNumber(value)
+  return parsed === null ? null : Math.round(parsed)
 }
 const dailyReviewFromPayload = (payload: unknown): DailyReview | null => {
   if (!payload || typeof payload !== 'object') return null
@@ -1040,11 +1045,11 @@ export default function App() {
       const weights = weightRows ?? []
       const weight = weights.find((row) => row.source === 'manual') ?? weights[0]
       setDailyHealthDraft({
-        calories: health?.calories_kcal === null || health?.calories_kcal === undefined ? '' : String(health.calories_kcal),
-        protein: health?.protein_g === null || health?.protein_g === undefined ? '' : String(health.protein_g),
-        carbs: health?.carbs_g === null || health?.carbs_g === undefined ? '' : String(health.carbs_g),
-        fat: health?.fat_g === null || health?.fat_g === undefined ? '' : String(health.fat_g),
-        steps: health?.steps === null || health?.steps === undefined ? '' : String(health.steps),
+        calories: wholeNumberText(health?.calories_kcal),
+        protein: wholeNumberText(health?.protein_g),
+        carbs: wholeNumberText(health?.carbs_g),
+        fat: wholeNumberText(health?.fat_g),
+        steps: wholeNumberText(health?.steps),
         weight: weight?.weight_lb === undefined ? '' : String(weight.weight_lb),
       })
       setDailyHealthLoading(false)
@@ -1720,17 +1725,17 @@ export default function App() {
   const saveDailyHealth = async () => {
     if (!supabase || !user || dailyHealthSaving) return
     const values = {
-      calories: parseOptionalNumber(dailyHealthDraft.calories),
-      protein: parseOptionalNumber(dailyHealthDraft.protein),
-      carbs: parseOptionalNumber(dailyHealthDraft.carbs),
-      fat: parseOptionalNumber(dailyHealthDraft.fat),
-      steps: parseOptionalNumber(dailyHealthDraft.steps),
+      calories: parseOptionalWholeNumber(dailyHealthDraft.calories),
+      protein: parseOptionalWholeNumber(dailyHealthDraft.protein),
+      carbs: parseOptionalWholeNumber(dailyHealthDraft.carbs),
+      fat: parseOptionalWholeNumber(dailyHealthDraft.fat),
+      steps: parseOptionalWholeNumber(dailyHealthDraft.steps),
       weight: parseOptionalNumber(dailyHealthDraft.weight),
     }
     const invalidField = (Object.entries(dailyHealthDraft) as Array<[keyof DailyHealthDraft, string]>).find(([field, raw]) => {
       if (!raw.trim()) return false
-      const value = values[field]
-      return value === null || value < 0 || (field === 'weight' && value <= 0) || (field === 'steps' && !Number.isInteger(value))
+      const rawValue = parseOptionalNumber(raw)
+      return rawValue === null || rawValue < 0 || (field === 'weight' && rawValue <= 0)
     })
     if (invalidField) {
       pushToast(`Check the ${invalidField[0]} value.`)
@@ -1781,6 +1786,14 @@ export default function App() {
       pushToast('Could not save daily numbers.')
       return
     }
+    setDailyHealthDraft((current) => ({
+      ...current,
+      calories: wholeNumberText(values.calories),
+      protein: wholeNumberText(values.protein),
+      carbs: wholeNumberText(values.carbs),
+      fat: wholeNumberText(values.fat),
+      steps: wholeNumberText(values.steps),
+    }))
     pushToast('Daily numbers saved.')
   }
 
@@ -2707,9 +2720,9 @@ export default function App() {
               <div className="dailyHealthGrid">
                 {([
                   ['calories', 'Calories', 'kcal', 'numeric'],
-                  ['protein', 'Protein', 'g', 'decimal'],
-                  ['carbs', 'Carbs', 'g', 'decimal'],
-                  ['fat', 'Fat', 'g', 'decimal'],
+                  ['protein', 'Protein', 'g', 'numeric'],
+                  ['carbs', 'Carbs', 'g', 'numeric'],
+                  ['fat', 'Fat', 'g', 'numeric'],
                   ['steps', 'Steps', '', 'numeric'],
                   ['weight', 'Weight', 'lb', 'decimal'],
                 ] as const).map(([field, label, unit, inputMode]) => <label key={field} className="field dailyMetricField"><span>{label}</span><div className="metricInputWrap"><input type="text" inputMode={inputMode} placeholder="—" value={dailyHealthDraft[field]} onChange={(event) => setDailyHealthDraft((current) => ({ ...current, [field]: event.target.value }))} />{unit && <small>{unit}</small>}</div></label>)}

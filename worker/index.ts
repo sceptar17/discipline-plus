@@ -592,11 +592,11 @@ async function buildDailyReviewContext(user: AuthenticatedUser, date: string, en
 
   const healthRows = health.results.map((row) => ({
     date: row.date,
-    calories: row.calories_kcal,
-    protein: row.protein_g,
-    carbs: row.carbs_g,
-    fat: row.fat_g,
-    steps: row.steps,
+    calories: typeof row.calories_kcal === 'number' ? Math.round(row.calories_kcal) : row.calories_kcal,
+    protein: typeof row.protein_g === 'number' ? Math.round(row.protein_g) : row.protein_g,
+    carbs: typeof row.carbs_g === 'number' ? Math.round(row.carbs_g) : row.carbs_g,
+    fat: typeof row.fat_g === 'number' ? Math.round(row.fat_g) : row.fat_g,
+    steps: typeof row.steps === 'number' ? Math.round(row.steps) : row.steps,
   }))
   const oneWeightPerDay = new Map<string, number>()
   weights.results.forEach((row) => {
