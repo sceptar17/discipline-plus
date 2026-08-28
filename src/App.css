@@ -983,6 +983,33 @@
   min-width: 220px;
 }
 
+.setRepsInputWrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 8px;
+}
+
+.setSeparatorButton {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.countTargetFields {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.countUnitField {
+  flex: 0 0 104px;
+}
+
 .compactDifficultyField {
   max-width: 260px;
 }
@@ -1028,7 +1055,12 @@
 }
 
 .dailyMetricField {
+  gap: 5px;
   min-width: 0;
+}
+
+.dailyMetricField > span {
+  font-size: 0.76rem;
 }
 
 .metricInputWrap {
@@ -1037,6 +1069,8 @@
 
 .metricInputWrap input {
   width: 100%;
+  min-height: 42px;
+  padding-block: 0.55rem;
   padding-right: 38px;
 }
 
@@ -1965,7 +1999,22 @@ textarea:focus-visible {
   }
 
   .dailyHealthGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .dailyHealthCard {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .metricInputWrap input {
+    padding-left: 10px;
+    padding-right: 30px;
+  }
+
+  .metricInputWrap small {
+    right: 8px;
   }
 
   .dailyHealthActions {

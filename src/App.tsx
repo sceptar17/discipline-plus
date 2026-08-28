@@ -9,7 +9,8 @@ type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
 type RM = 'last-result' | 'personal-best'
 type PM = 'count' | 'time' | 'weight'
 type EffortRating = 'easy' | 'moderate' | 'hard' | 'limit'
-type Target = { count?: number; sets?: number; reps?: number; seconds?: number; distance?: number; unit?: 'mi' | 'km'; weight?: number }
+type CountUnit = 'reps' | 'steps'
+type Target = { count?: number; countUnit?: CountUnit; sets?: number; reps?: number; seconds?: number; distance?: number; unit?: 'mi' | 'km'; weight?: number }
 type SetResult = { reps: number; weight?: number }
 type Result = { seconds?: number; timeText?: string; weight?: number; count?: number; sets?: SetResult[]; difficulty?: EffortRating; note?: string }
 type Exercise = { id: string; kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
@@ -91,9 +92,10 @@ const fmtShort = (k: string) => d(k).toLocaleDateString(undefined, { month: 'sho
 const fmtMonth = (k: string) => d(k).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 const fmtSecs = (s?: number) => !s ? '--:--' : `${Math.floor(s / 60)}:${`${s % 60}`.padStart(2, '0')}`
 const parseSecs = (v: string) => { if (!v.trim()) return undefined; if (v.includes(':')) { const [m, s] = v.split(':').map(Number); return Number.isNaN(m) || Number.isNaN(s) ? undefined : m * 60 + s } const n = Number(v); return Number.isNaN(n) ? undefined : n * 60 }
-const blank = (t: TT): Target => t === 'count' ? { count: 25 } : t === 'sets' ? { sets: 4, reps: 10 } : t === 'duration' ? { seconds: 60 } : t === 'distance' ? { distance: 2, unit: 'mi' } : t === 'for-time' ? { count: 100 } : { sets: 4, reps: 8, weight: 30 }
+const blank = (t: TT): Target => t === 'count' ? { count: 25, countUnit: 'reps' } : t === 'sets' ? { sets: 4, reps: 10 } : t === 'duration' ? { seconds: 60 } : t === 'distance' ? { distance: 2, unit: 'mi' } : t === 'for-time' ? { count: 100 } : { sets: 4, reps: 8, weight: 30 }
 const clone = (t: Target) => ({ ...t })
-const sum = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0} count` : t === 'sets' ? `${x.sets ?? 0} x ${x.reps ?? 0}` : t === 'duration' ? durationShort(x.seconds) : t === 'distance' ? `${x.distance ?? 0} ${x.unit ?? 'mi'}` : t === 'for-time' ? `${x.count ?? 0} count for time` : `${x.sets ?? 0} x ${x.reps ?? 0} @ ${x.weight ?? 0} lb`
+const countUnitLabel = (target: Target) => target.countUnit === 'steps' ? 'steps' : 'reps'
+const sum = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0} ${countUnitLabel(x)}` : t === 'sets' ? `${x.sets ?? 0} x ${x.reps ?? 0}` : t === 'duration' ? durationShort(x.seconds) : t === 'distance' ? `${x.distance ?? 0} ${x.unit ?? 'mi'}` : t === 'for-time' ? `${x.count ?? 0} count for time` : `${x.sets ?? 0} x ${x.reps ?? 0} @ ${x.weight ?? 0} lb`
 const totalCount = (target: Target) => target.count ?? ((target.sets ?? 0) * (target.reps ?? 0))
 const metric = (progressMetric: PM, entry: Pick<Log, 'target' | 'result'>) => progressMetric === 'count' ? entry.result.count ?? totalCount(entry.target) : progressMetric === 'time' ? entry.result.seconds ?? entry.target.seconds : entry.result.weight ?? entry.target.weight
 const durationShort = (seconds?: number) => seconds === undefined ? '0:00' : `${Math.floor(seconds / 60)}:${`${seconds % 60}`.padStart(2, '0')}`
@@ -102,7 +104,7 @@ const workoutSummary = (t: TT, x: Target) => {
     const volume = `${x.sets ?? 0} × ${x.reps ?? 0}`
     return x.weight !== undefined ? `${volume} · ${x.weight} lb` : volume
   }
-  if (t === 'count') return `${x.count ?? 0} reps`
+  if (t === 'count') return `${x.count ?? 0} ${countUnitLabel(x)}`
   if (t === 'duration') return durationShort(x.seconds)
   if (t === 'distance') return `${x.distance ?? 0} ${x.unit ?? 'mi'}`
   return `${x.count ?? 0} reps for time`
@@ -209,7 +211,7 @@ const parseSetReps = (value: string) => value
   .filter(Boolean)
   .map(Number)
 const targetForType = (type: TT, target: Target): Target => {
-  if (type === 'count') return { count: Math.max(1, Number(target.count ?? 1)) }
+  if (type === 'count') return { count: Math.max(1, Number(target.count ?? 1)), countUnit: target.countUnit === 'steps' ? 'steps' : 'reps' }
   if (type === 'sets') return { sets: Math.max(1, Number(target.sets ?? 3)), reps: Math.max(1, Number(target.reps ?? 10)) }
   if (type === 'duration') return { seconds: Math.max(10, Number(target.seconds ?? 60)) }
   if (type === 'distance') return { distance: Math.max(0.1, Number(target.distance ?? 1)), unit: target.unit === 'km' ? 'km' : 'mi' as 'mi' | 'km' }
@@ -2743,8 +2745,12 @@ export default function App() {
                       return { ...current, [item.id]: { ...activeDraft, timeText: parsed !== undefined ? fmtSecs(parsed) : activeDraft.timeText } }
                     })} /></label>}
                     {progressMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="text" inputMode="decimal" placeholder="0" value={draft.weightText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), weightText: e.target.value } }))} /></label>}
-                    {supportsSetResults && <label className="field setRepsField"><span>Reps by set</span><input type="text" inputMode="numeric" placeholder="8 / 8 / 7 / 7" value={draft.setRepsText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), setRepsText: e.target.value } }))} /></label>}
-                    {progressMetric === 'count' && !supportsSetResults && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual count</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
+                    {supportsSetResults && <label className="field setRepsField"><span>Reps by set</span><div className="setRepsInputWrap"><input type="text" inputMode="numeric" placeholder="8 / 8 / 7 / 7" value={draft.setRepsText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), setRepsText: e.target.value } }))} /><button type="button" className="setSeparatorButton" aria-label="Add separator between sets" onClick={() => setItemDrafts((current) => {
+                      const activeDraft = current[item.id] ?? makeItemDraft(item, ex)
+                      const trimmed = activeDraft.setRepsText.trimEnd().replace(/\/+$/, '').trimEnd()
+                      return { ...current, [item.id]: { ...activeDraft, setRepsText: trimmed ? `${trimmed} / ` : '' } }
+                    })}>/</button></div></label>}
+                    {progressMetric === 'count' && !supportsSetResults && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual {countUnitLabel(draft.target)}</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
                     <div className="targetActions">{metricActions}</div>
                   </div>
                   <label className="field compactDifficultyField"><span>How did it feel?</span><select value={draft.difficulty} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), difficulty: e.target.value as '' | EffortRating } }))}><option value="">Not rated</option><option value="easy">Easy</option><option value="moderate">Moderate</option><option value="hard">Hard</option><option value="limit">At my limit</option></select></label>
@@ -2780,13 +2786,13 @@ export default function App() {
             {dailyHealthLoading ? <p className="mutedCopy">Loading daily numbers...</p> : <>
               <div className="dailyHealthGrid">
                 {([
-                  ['calories', 'Calories', 'kcal', 'numeric'],
-                  ['protein', 'Protein', 'g', 'numeric'],
-                  ['carbs', 'Carbs', 'g', 'numeric'],
-                  ['fat', 'Fat', 'g', 'numeric'],
-                  ['steps', 'Steps', '', 'numeric'],
-                  ['weight', 'Weight', 'lb', 'decimal'],
-                ] as const).map(([field, label, unit, inputMode]) => <label key={field} className="field dailyMetricField"><span>{label}</span><div className="metricInputWrap"><input type="text" inputMode={inputMode} placeholder="—" value={dailyHealthDraft[field]} onChange={(event) => setDailyHealthDraft((current) => ({ ...current, [field]: event.target.value }))} />{unit && <small>{unit}</small>}</div></label>)}
+                  ['calories', 'Calories', 'kcal', 'numeric', 5],
+                  ['protein', 'Protein', 'g', 'numeric', 4],
+                  ['carbs', 'Carbs', 'g', 'numeric', 4],
+                  ['fat', 'Fat', 'g', 'numeric', 4],
+                  ['steps', 'Steps', '', 'numeric', 6],
+                  ['weight', 'Weight', 'lb', 'decimal', 5],
+                ] as const).map(([field, label, unit, inputMode, maxLength]) => <label key={field} className="field dailyMetricField"><span>{label}</span><div className="metricInputWrap"><input type="text" inputMode={inputMode} maxLength={maxLength} placeholder="—" value={dailyHealthDraft[field]} onChange={(event) => setDailyHealthDraft((current) => ({ ...current, [field]: event.target.value }))} />{unit && <small>{unit}</small>}</div></label>)}
               </div>
               <div className="dailyHealthActions">
                 <div className="dailyHealthButtons">
@@ -3385,8 +3391,8 @@ export default function App() {
 
 function TargetEditor({ type, target, onChange, actions, layout = 'default' }: { type: TT; target: Target; onChange: (t: Target) => void; actions?: ReactNode; layout?: 'default' | 'detail' }) {
   if (type === 'count') {
-    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Target count</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetRow"><label className="field grow"><span>Target count</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
+    const fields = <div className="countTargetFields"><label className={`field ${layout === 'detail' ? 'compactMetricField compactControl' : 'grow'}`}><span>Target count</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ ...target, count: parseNumberInput(e.target.value) })} /></label><label className={`field countUnitField ${layout === 'detail' ? 'compactControl' : ''}`}><span>Count as</span><select value={target.countUnit ?? 'reps'} onChange={(e) => onChange({ ...target, countUnit: e.target.value as CountUnit })}><option value="reps">Reps</option><option value="steps">Steps</option></select></label></div>
+    return <div className="targetRow">{fields}{actions}</div>
   }
   if (type === 'sets') {
     if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label>{actions}</div>
