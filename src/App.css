@@ -810,6 +810,80 @@
   gap: 8px;
 }
 
+.planListActions,
+.scheduleModePicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.planSchedulerCard {
+  border-color: rgba(243, 107, 0, 0.32);
+  background: linear-gradient(145deg, rgba(243, 107, 0, 0.1), rgba(243, 107, 0, 0.02) 52%), var(--panel);
+}
+
+.planSchedulerFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.schedulePreview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.schedulePreviewSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.schedulePreviewSummary > div,
+.cyclePreviewList > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.schedulePreviewSummary span,
+.cyclePreviewList span {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.cyclePreviewList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.cyclePreviewList strong {
+  font-size: 0.84rem;
+}
+
+.scheduleConflictWarning {
+  padding: 12px;
+  border: 1px solid rgba(231, 128, 109, 0.46);
+  border-radius: 14px;
+  background: rgba(166, 57, 39, 0.13);
+  color: #ffd0c7;
+}
+
+.scheduleConflictWarning p {
+  margin-top: 4px;
+  color: #efb4a9;
+  font-size: 0.82rem;
+}
+
 .planListRow,
 .progressHistoryCard,
 .planDayCard,
@@ -2183,5 +2257,15 @@ textarea:focus-visible {
 
   .coachComposer button {
     width: 100%;
+  }
+
+  .planSchedulerFields,
+  .schedulePreviewSummary,
+  .cyclePreviewList {
+    grid-template-columns: 1fr;
+  }
+
+  .planListActions {
+    justify-content: flex-end;
   }
 }

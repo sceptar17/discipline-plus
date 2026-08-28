@@ -27,6 +27,9 @@ type LegacyState = { exercises?: Exercise[]; schedule?: Array<Omit<Day, 'items'>
 type State = { exercises: Exercise[]; schedule: Day[]; plans: Plan[]; runs: Run[]; logs: Log[] }
 type ExerciseForm = { kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
 type PlanForm = { name: string; focus: string }
+type PlanScheduleMode = 'cycles' | 'end-date'
+type PlanCyclePreview = { cycleNumber: number; startDate: string; endDate: string; days: Array<{ date: string; dayNo: number; planDay: PlanDay }> }
+type PlanSchedulePreview = { cycles: PlanCyclePreview[]; dates: string[]; conflicts: string[]; startDate: string; endDate: string; totalDays: number; error: string }
 type Toast = { id: string; message: string }
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
 type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
@@ -98,10 +101,12 @@ const id = (p: string) => `${p}-${Math.random().toString(36).slice(2, 9)}`
 const d = (k: string) => new Date(`${k}T12:00:00`)
 const key = (dt: Date) => `${dt.getFullYear()}-${`${dt.getMonth() + 1}`.padStart(2, '0')}-${`${dt.getDate()}`.padStart(2, '0')}`
 const add = (k: string, n: number) => { const x = d(k); x.setDate(x.getDate() + n); return key(x) }
+const dateOrdinal = (date: string) => Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10))) / 86400000
 const monthKey = (k: string) => `${k.slice(0, 7)}-01`
 const fmtDay = (k: string) => d(k).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
 const fmtShort = (k: string) => d(k).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 const fmtMonth = (k: string) => d(k).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+const fmtDateRange = (start: string, end: string) => start === end ? fmtShort(start) : `${fmtShort(start)}–${fmtShort(end)}`
 const fmtSecs = (s?: number) => !s ? '--:--' : `${Math.floor(s / 60)}:${`${s % 60}`.padStart(2, '0')}`
 const parseSecs = (v: string) => { if (!v.trim()) return undefined; if (v.includes(':')) { const [m, s] = v.split(':').map(Number); return Number.isNaN(m) || Number.isNaN(s) ? undefined : m * 60 + s } const n = Number(v); return Number.isNaN(n) ? undefined : n * 60 }
 const blank = (t: TT): Target => t === 'count' ? { count: 25, countUnit: 'reps' } : t === 'sets' ? { sets: 4, reps: 10 } : t === 'duration' ? { seconds: 60 } : t === 'distance' ? { distance: 2, unit: 'mi' } : t === 'for-time' ? { count: 100 } : { sets: 4, reps: 8, weight: 30 }
@@ -661,7 +666,8 @@ function runStartLabel(startDate: string, today: string) {
 function runDisplayName(run: Run, plans: Plan[], today: string) {
   const plan = run.planId ? plans.find((entry) => entry.id === run.planId) : undefined
   const cleanedRunName = run.name.replace(/\s+starting\s+.+$/i, '').trim()
-  const baseName = plan?.name ?? (cleanedRunName || run.name)
+  const cycleLabel = run.name.match(/·\s*Cycle\s+\d+/i)?.[0] ?? ''
+  const baseName = `${plan?.name ?? (cleanedRunName || run.name)}${plan && cycleLabel ? ` ${cycleLabel}` : ''}`
   const startLabel = runStartLabel(run.startDate, today).toLowerCase()
   return `${baseName} ${startLabel}`
 }
@@ -671,9 +677,46 @@ function scheduledPlanLabel(day: Day, runs: Run[], plans: Plan[]) {
   const run = runs.find((entry) => entry.id === day.runId)
   if (!run) return ''
   const plan = run.planId ? plans.find((entry) => entry.id === run.planId) : undefined
-  const planName = plan?.name ?? run.name.replace(/\s+starting\s+.+$/i, '').trim()
+  const cycleLabel = run.name.match(/·\s*Cycle\s+\d+/i)?.[0] ?? ''
+  const planName = `${plan?.name ?? run.name.replace(/\s+starting\s+.+$/i, '').trim()}${plan && cycleLabel ? ` ${cycleLabel}` : ''}`
   if (!planName) return ''
   return `${planName} - Day ${day.dayNo}`
+}
+
+function buildPlanSchedulePreview(plan: Plan | undefined, startDate: string, mode: PlanScheduleMode, cycleCount: number, endDate: string, schedule: Day[], firstCycleNumber: number): PlanSchedulePreview {
+  const empty = { cycles: [], dates: [], conflicts: [], startDate, endDate: startDate, totalDays: 0, error: '' }
+  if (!plan || plan.days.length === 0) return { ...empty, error: 'Add at least one day to this plan first.' }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return { ...empty, error: 'Choose a valid start date.' }
+  let daysToSchedule: number
+  if (mode === 'end-date') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate < startDate) return { ...empty, error: 'The program end date must be on or after the start date.' }
+    daysToSchedule = Math.floor(dateOrdinal(endDate) - dateOrdinal(startDate)) + 1
+    if (daysToSchedule > 366) return { ...empty, error: 'Choose a program window of one year or less.' }
+  } else {
+    const safeCycles = Math.max(1, Math.min(12, Math.floor(cycleCount || 1)))
+    daysToSchedule = safeCycles * plan.days.length
+  }
+  const cycles: PlanCyclePreview[] = []
+  let remaining = daysToSchedule
+  let offset = 0
+  while (remaining > 0) {
+    const dayCount = Math.min(plan.days.length, remaining)
+    const days = plan.days.slice(0, dayCount).map((planDay, index) => ({ date: add(startDate, offset + index), dayNo: index + 1, planDay }))
+    cycles.push({ cycleNumber: firstCycleNumber + cycles.length, startDate: days[0].date, endDate: days[days.length - 1].date, days })
+    remaining -= dayCount
+    offset += dayCount
+  }
+  const dates = cycles.flatMap((cycle) => cycle.days.map((entry) => entry.date))
+  const occupiedDates = new Set(schedule.map((day) => day.date))
+  return {
+    cycles,
+    dates,
+    conflicts: dates.filter((date) => occupiedDates.has(date)),
+    startDate,
+    endDate: dates[dates.length - 1] ?? startDate,
+    totalDays: dates.length,
+    error: '',
+  }
 }
 
 function effectiveProgressMetric(exercise: Exercise, type: TT): PM {
@@ -983,6 +1026,10 @@ export default function App() {
   const [scheduleMoveTarget, setScheduleMoveTarget] = useState<ScheduleMoveTarget | null>(null)
   const [applyPlanId, setApplyPlanId] = useState<string | null>(null)
   const [applyStartDate, setApplyStartDate] = useState(today)
+  const [applyScheduleMode, setApplyScheduleMode] = useState<PlanScheduleMode>('cycles')
+  const [applyCycleCount, setApplyCycleCount] = useState(1)
+  const [applyEndDate, setApplyEndDate] = useState(add(today, 59))
+  const [applyPlanSaving, setApplyPlanSaving] = useState(false)
   const [keepCompletedPlanDays, setKeepCompletedPlanDays] = useState(true)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [confirmState, setConfirmState] = useState<ConfirmState>(null)
@@ -1203,6 +1250,9 @@ export default function App() {
   const sortedDays = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
   const nextWorkoutDay = sortedDays.find((day0) => day0.date > selected && !day0.rest && day0.items.length > 0)
   const activePlanIds = new Set(state.runs.map((run) => run.planId).filter((planId): planId is string => !!planId))
+  const planToApply = state.plans.find((entry) => entry.id === applyPlanId)
+  const firstNewCycleNumber = applyPlanId ? state.runs.filter((run) => run.planId === applyPlanId).length + 1 : 1
+  const applyPlanPreview = buildPlanSchedulePreview(planToApply, applyStartDate, applyScheduleMode, applyCycleCount, applyEndDate, state.schedule, firstNewCycleNumber)
   const futureDays = sortedDays.filter((day0) => day0.date >= today)
   const pastDays = sortedDays.filter((day0) => day0.date < today).reverse()
   const listDays = showPastDays ? [...pastDays, ...futureDays] : futureDays
@@ -2430,17 +2480,48 @@ export default function App() {
     }
   }
 
-  const applyPlanById = async (planIdToApply: string, startDate: string) => {
-    const targetPlan = state.plans.find((p) => p.id === planIdToApply)
-    if (!targetPlan) return
-    const runId = id('run')
-    const made: Day[] = targetPlan.days.map((pd, i) => ({ date: add(startDate, i), notes: pd.notes || `${targetPlan.name} - ${pd.label}`, rest: pd.rest, skipped: false, runId, dayNo: i + 1, items: pd.items.map((it) => ({ id: id('it'), exerciseId: it.exerciseId, type: it.type, target: clone(it.target), ref: it.ref, done: false, result: {} })) }))
-    const replacedItemIds = new Set(state.schedule.filter((day0) => made.some((created) => created.date === day0.date)).flatMap((day0) => day0.items.map((item) => item.id)))
-    await commitScheduleState(
-      [...state.schedule.filter((x) => !made.some((m) => m.date === x.date)), ...made],
-      [...state.runs, { id: runId, planId: targetPlan.id, startDate, name: `${targetPlan.name} starting ${fmtShort(startDate)}` }],
-      state.logs.filter((entry) => !entry.sourceItemId || !replacedItemIds.has(entry.sourceItemId)),
-    )
+  const openPlanScheduler = (planIdToApply: string) => {
+    const runIds = new Set(state.runs.filter((run) => run.planId === planIdToApply).map((run) => run.id))
+    const latestScheduledDate = state.schedule.filter((day0) => day0.runId && runIds.has(day0.runId)).map((day0) => day0.date).sort().at(-1)
+    const startDate = latestScheduledDate ? add(latestScheduledDate, 1) : today
+    setApplyPlanId(planIdToApply)
+    setApplyStartDate(startDate)
+    setApplyScheduleMode('cycles')
+    setApplyCycleCount(1)
+    setApplyEndDate(add(startDate, 59))
+  }
+
+  const schedulePlanCycles = async () => {
+    if (!planToApply || applyPlanSaving) return
+    if (applyPlanPreview.error) {
+      pushToast(applyPlanPreview.error)
+      return
+    }
+    if (applyPlanPreview.conflicts.length) {
+      pushToast('Resolve the calendar conflicts before scheduling this plan.')
+      return
+    }
+    setApplyPlanSaving(true)
+    const made: Day[] = []
+    const nextRuns: Run[] = []
+    applyPlanPreview.cycles.forEach((cycle) => {
+      const runId = id('run')
+      nextRuns.push({ id: runId, planId: planToApply.id, startDate: cycle.startDate, name: `${planToApply.name} · Cycle ${cycle.cycleNumber} starting ${fmtShort(cycle.startDate)}` })
+      cycle.days.forEach(({ date, dayNo, planDay }) => made.push({
+        date,
+        notes: planDay.notes || `${planToApply.name} - ${planDay.label}`,
+        rest: planDay.rest,
+        skipped: false,
+        runId,
+        dayNo,
+        items: planDay.items.map((item) => ({ id: id('it'), exerciseId: item.exerciseId, type: item.type, target: clone(item.target), ref: item.ref, done: false, result: {} })),
+      }))
+    })
+    const saved = await commitScheduleState([...state.schedule, ...made], [...state.runs, ...nextRuns], state.logs, { persistMode: 'immediate' })
+    setApplyPlanSaving(false)
+    if (!saved) return
+    setApplyPlanId(null)
+    pushToast(`${applyPlanPreview.cycles.length} cycle${applyPlanPreview.cycles.length === 1 ? '' : 's'} scheduled through ${fmtShort(applyPlanPreview.endDate)}.`)
   }
 
   const shiftPlan = async () => {
@@ -3187,15 +3268,27 @@ export default function App() {
           <div className="stack">
             {state.plans.map((p) => <div key={p.id} className={selectedPlanId === p.id ? 'listItem activeItem planListRow' : 'listItem planListRow'}>
               <button className="planListButton" onClick={() => selectPlan(p.id)}><strong>{p.name}</strong></button>
-              {activePlanIds.has(p.id) ? <span className="status activePlanStatus">Active</span> : <button className="pill softActionPill" onClick={() => { setApplyPlanId(p.id); setApplyStartDate(today) }} aria-label={`Apply ${p.name}`}>Apply</button>}
+              <div className="planListActions">{activePlanIds.has(p.id) && <span className="status activePlanStatus">Active</span>}<button className="pill softActionPill" onClick={() => openPlanScheduler(p.id)} aria-label={`Schedule ${p.name}`}>{activePlanIds.has(p.id) ? 'Schedule next' : 'Schedule'}</button></div>
             </div>)}
           </div>
-          {applyPlanId && <div className="card stack">
-            <div><p className="eyebrow">Apply plan</p><h3>{state.plans.find((p) => p.id === applyPlanId)?.name ?? 'Plan'}</h3></div>
-            <label className="field"><span>Start date</span><input type="date" value={applyStartDate} onChange={(e) => setApplyStartDate(e.target.value)} /></label>
+          {applyPlanId && <div className="card stack planSchedulerCard">
+            <div><p className="eyebrow">Schedule plan</p><h3>{planToApply?.name ?? 'Plan'}</h3><p className="mutedCopy">Create independent calendar cycles without changing the reusable plan template.</p></div>
+            <div className="scheduleModePicker" role="group" aria-label="Scheduling method">
+              <button className={applyScheduleMode === 'cycles' ? 'pill active' : 'pill'} onClick={() => setApplyScheduleMode('cycles')}>Number of cycles</button>
+              <button className={applyScheduleMode === 'end-date' ? 'pill active' : 'pill'} onClick={() => setApplyScheduleMode('end-date')}>Through an end date</button>
+            </div>
+            <div className="planSchedulerFields">
+              <label className="field"><span>Start date</span><input type="date" value={applyStartDate} onChange={(e) => setApplyStartDate(e.target.value)} /></label>
+              {applyScheduleMode === 'cycles' ? <label className="field"><span>Cycles</span><input type="number" inputMode="numeric" min={1} max={12} value={applyCycleCount} onChange={(e) => setApplyCycleCount(Math.max(1, Math.min(12, Number(e.target.value) || 1)))} /></label> : <label className="field"><span>Program end date</span><input type="date" value={applyEndDate} onChange={(e) => setApplyEndDate(e.target.value)} /></label>}
+            </div>
+            {applyPlanPreview.error ? <p className="status warn">{applyPlanPreview.error}</p> : <div className="schedulePreview">
+              <div className="schedulePreviewSummary"><div><span>Date range</span><strong>{fmtDateRange(applyPlanPreview.startDate, applyPlanPreview.endDate)}</strong></div><div><span>Calendar days</span><strong>{applyPlanPreview.totalDays}</strong></div><div><span>Cycles</span><strong>{applyPlanPreview.cycles.length}</strong></div></div>
+              <div className="cyclePreviewList">{applyPlanPreview.cycles.map((cycle) => <div key={`${cycle.cycleNumber}-${cycle.startDate}`}><span>Cycle {cycle.cycleNumber}</span><strong>{fmtDateRange(cycle.startDate, cycle.endDate)}{cycle.days.length < (planToApply?.days.length ?? 0) ? ` · ${cycle.days.length}-day partial cycle` : ''}</strong></div>)}</div>
+              {applyPlanPreview.conflicts.length > 0 && <div className="scheduleConflictWarning"><strong>{applyPlanPreview.conflicts.length} calendar conflict{applyPlanPreview.conflicts.length === 1 ? '' : 's'}</strong><p>{applyPlanPreview.conflicts.slice(0, 5).map(fmtShort).join(', ')}{applyPlanPreview.conflicts.length > 5 ? ` and ${applyPlanPreview.conflicts.length - 5} more` : ''}. Choose another start date or adjust the existing schedule first.</p></div>}
+            </div>}
             <div className="nav">
-              <button className="primary" onClick={() => { applyPlanById(applyPlanId, applyStartDate); setApplyPlanId(null) }}>Apply to schedule</button>
-              <button className="pill" onClick={() => setApplyPlanId(null)}>Cancel</button>
+              <button className="primary" onClick={() => void schedulePlanCycles()} disabled={applyPlanSaving || Boolean(applyPlanPreview.error) || applyPlanPreview.conflicts.length > 0}>{applyPlanSaving ? 'Scheduling...' : `Schedule ${applyPlanPreview.cycles.length || ''} cycle${applyPlanPreview.cycles.length === 1 ? '' : 's'}`}</button>
+              <button className="pill" onClick={() => setApplyPlanId(null)} disabled={applyPlanSaving}>Cancel</button>
             </div>
           </div>}
           <div className="stack">
@@ -3204,7 +3297,7 @@ export default function App() {
               const linkedPlan = r.planId ? state.plans.find((plan0) => plan0.id === r.planId) : null
               const runDays = state.schedule.filter((x) => x.runId === r.id)
               const completedDays = runDays.filter((day) => day.items.length > 0 && day.items.every((item) => item.done)).length
-              const totalDays = linkedPlan?.days.length ?? runDays.length
+              const totalDays = runDays.length || linkedPlan?.days.length || 0
               const progress = totalDays ? Math.round((completedDays / totalDays) * 100) : 0
               return <article key={r.id} className="card stack">
                 <div className="row">
