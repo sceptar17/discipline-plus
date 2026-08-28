@@ -1034,6 +1034,11 @@
   gap: 14px;
 }
 
+.dailyHealthHeading.collapsibleSectionHeader,
+.coachReviewHeading.collapsibleSectionHeader {
+  flex: none;
+}
+
 .dailyHealthHeading .eyebrow {
   margin-bottom: 4px;
 }
@@ -1465,6 +1470,76 @@
 .workoutProgressCopy,
 .planFocusCopy {
   color: var(--text-muted);
+}
+
+.dayFlowSection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+}
+
+.collapsibleSectionHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.collapsibleSectionHeader h3,
+.collapsibleSectionHeader p {
+  margin: 0;
+}
+
+.collapsibleSectionHeader .eyebrow {
+  margin-bottom: 4px;
+}
+
+.sectionHeaderStatus {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sectionChevron {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 1.1rem;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.collapsibleSectionHeader[aria-expanded='true'] .sectionChevron {
+  transform: rotate(180deg);
+}
+
+.collapsibleSectionContent {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.collapsedSection {
+  gap: 0;
 }
 
 .workoutList {

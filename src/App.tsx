@@ -9,6 +9,7 @@ type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
 type RM = 'last-result' | 'personal-best'
 type PM = 'count' | 'time' | 'weight'
 type EffortRating = 'easy' | 'moderate' | 'hard' | 'limit'
+type DaySection = 'workout' | 'health' | 'coach'
 type CountUnit = 'reps' | 'steps'
 type Target = { count?: number; countUnit?: CountUnit; sets?: number; reps?: number; seconds?: number; distance?: number; unit?: 'mi' | 'km'; weight?: number }
 type SetResult = { reps: number; weight?: number }
@@ -952,6 +953,7 @@ export default function App() {
   const [mobileSyncStatus, setMobileSyncStatus] = useState<MobileSyncStatus | null>(null)
   const [mobileSyncStatusLoading, setMobileSyncStatusLoading] = useState(false)
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
+  const [openDaySections, setOpenDaySections] = useState<Record<DaySection, boolean>>({ workout: true, health: false, coach: false })
   const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
   const [dailyHealthDraft, setDailyHealthDraft] = useState<DailyHealthDraft>(() => emptyDailyHealthDraft())
   const [dailyHealthLoading, setDailyHealthLoading] = useState(false)
@@ -975,6 +977,7 @@ export default function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const planImportInputRef = useRef<HTMLInputElement | null>(null)
   const dayDetailRef = useRef<HTMLElement | null>(null)
+  const daySectionsDateRef = useRef('')
   const exerciseDetailRef = useRef<HTMLElement | null>(null)
   const planDetailRef = useRef<HTMLElement | null>(null)
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
@@ -1111,6 +1114,13 @@ export default function App() {
     return () => { active = false }
   }, [user])
   useEffect(() => {
+    if (daySectionsDateRef.current === selected) return
+    daySectionsDateRef.current = selected
+    const selectedDay = localScheduleRef.current.schedule.find((entry) => entry.date === selected)
+    const complete = Boolean(selectedDay && !selectedDay.rest && selectedDay.items.length > 0 && selectedDay.items.every((item) => item.done))
+    setOpenDaySections({ workout: !complete && Boolean(selectedDay && !selectedDay.rest && selectedDay.items.length > 0), health: complete || !selectedDay || selectedDay.rest || selectedDay.items.length === 0, coach: false })
+  }, [selected, state.schedule])
+  useEffect(() => {
     if (!user) {
       setDailyReview(null)
       setCoachMessages([])
@@ -1171,6 +1181,8 @@ export default function App() {
     setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
   }, [progressExercises])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
+  const completedWorkoutItems = day.items.filter((item) => item.done).length
+  const workoutComplete = !day.rest && day.items.length > 0 && completedWorkoutItems === day.items.length
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
   const selectedDayPlanLabel = scheduledPlanLabel(day, state.runs, state.plans)
@@ -1183,6 +1195,7 @@ export default function App() {
   const listDays = showPastDays ? [...pastDays, ...futureDays] : futureDays
   const visibleDays = scheduleView === 'list' ? listDays.slice(0, visibleListCount) : sortedDays
   const pushToast = (message: string) => setToasts((current) => [...current, { id: id('toast'), message }])
+  const toggleDaySection = (section: DaySection) => setOpenDaySections((current) => ({ ...current, [section]: !current[section] }))
   const updateScheduleMoveTargetFromPoint = (clientY: number) => {
     if (!scheduleTouchDragRef.current?.active) return
     const cards = visibleDays
@@ -1847,6 +1860,7 @@ export default function App() {
       fat: wholeNumberText(values.fat),
       steps: wholeNumberText(values.steps),
     }))
+    setOpenDaySections((current) => ({ ...current, health: false, coach: true }))
     pushToast('Daily numbers saved.')
   }
 
@@ -2126,13 +2140,17 @@ export default function App() {
         }
         const currentDay = dayByDate[selected]
         const doneCount = (currentDay?.items.filter((existing) => existing.done).length ?? 0) + 1
-        if ((currentDay?.items.length ?? 0) > 0 && doneCount === currentDay?.items.length) pushToast('Day complete. Keep it moving.')
+        if ((currentDay?.items.length ?? 0) > 0 && doneCount === currentDay?.items.length) {
+          pushToast('Day complete. Keep it moving.')
+          setOpenDaySections((current) => ({ ...current, workout: false, health: true }))
+        }
       } else if (markComplete) {
         pushToast(`${exercise.name} result updated.`)
       }
     }
   }
   function loadWorkspaceState(next: State) {
+    daySectionsDateRef.current = ''
     setState(next)
     const nextToday = key(new Date())
     setSelected(nextToday)
@@ -2699,9 +2717,14 @@ export default function App() {
             <p className="eyebrow">{selected === today ? 'Today' : 'Workout'}</p>
             <h2>{fmtDay(selected)}</h2>
             {selectedDayPlanLabel && <p className="dayDetailMeta">{selectedDayPlanLabel}</p>}
-            {!day.rest && day.items.length > 0 && <p className="workoutProgressCopy">{day.items.filter((item) => item.done).length} of {day.items.length} complete</p>}
           </div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
+          <section className={`dayFlowSection workoutSection ${openDaySections.workout ? '' : 'collapsedSection'}`}>
+            <button type="button" className="collapsibleSectionHeader" onClick={() => toggleDaySection('workout')} aria-expanded={openDaySections.workout} aria-controls="workout-section-content">
+              <div><p className="eyebrow">Workout</p><h3>{day.rest || day.items.length === 0 ? 'Rest day' : selectedDayPlanLabel || 'Today’s session'}</h3></div>
+              <div className="sectionHeaderStatus"><span>{day.rest || day.items.length === 0 ? 'Recovery' : workoutComplete ? 'Complete' : `${completedWorkoutItems} of ${day.items.length}`}</span><span className="sectionChevron" aria-hidden="true">⌄</span></div>
+            </button>
+            {openDaySections.workout && <div id="workout-section-content" className="collapsibleSectionContent">
           {(day.rest || day.items.length === 0) && <div className="restState">
             <span className="restIcon" aria-hidden="true">☾</span>
             <div><h3>Rest day</h3><p>Recover today. Your next session will be ready when you are.</p></div>
@@ -2778,11 +2801,14 @@ export default function App() {
               </article>
             })}</div>
           </>}
-          <section className="dailyHealthCard" aria-labelledby="daily-health-title">
-            <div className="dailyHealthHeading">
+            </div>}
+          </section>
+          <section className={`dailyHealthCard ${openDaySections.health ? '' : 'collapsedSection'}`} aria-labelledby="daily-health-title">
+            <button type="button" className="dailyHealthHeading collapsibleSectionHeader" onClick={() => toggleDaySection('health')} aria-expanded={openDaySections.health} aria-controls="daily-health-content">
               <div><p className="eyebrow">Daily numbers</p><h3 id="daily-health-title">Nutrition, activity & weight</h3></div>
-              <span className="sourceBadge">Daily totals</span>
-            </div>
+              <div className="sectionHeaderStatus"><span className="sourceBadge">Daily totals</span><span className="sectionChevron" aria-hidden="true">⌄</span></div>
+            </button>
+            {openDaySections.health && <div id="daily-health-content" className="collapsibleSectionContent">
             {dailyHealthLoading ? <p className="mutedCopy">Loading daily numbers...</p> : <>
               <div className="dailyHealthGrid">
                 {([
@@ -2809,12 +2835,14 @@ export default function App() {
                 </div>
               </div>
             </>}
+            </div>}
           </section>
-          <section className="coachReviewCard" aria-labelledby="daily-review-title">
-            <div className="coachReviewHeading">
+          <section className={`coachReviewCard ${openDaySections.coach ? '' : 'collapsedSection'}`} aria-labelledby="daily-review-title">
+            <button type="button" className="coachReviewHeading collapsibleSectionHeader" onClick={() => toggleDaySection('coach')} aria-expanded={openDaySections.coach} aria-controls="daily-review-content">
               <div><p className="eyebrow">AI coach</p><h3 id="daily-review-title">Daily review</h3></div>
-              {dailyReview && <span className="sourceBadge">Saved</span>}
-            </div>
+              <div className="sectionHeaderStatus">{dailyReview && <span className="sourceBadge">Saved</span>}<span className="sectionChevron" aria-hidden="true">⌄</span></div>
+            </button>
+            {openDaySections.coach && <div id="daily-review-content" className="collapsibleSectionContent">
             {dailyReviewLoading ? <p className="mutedCopy">Loading your saved review...</p> : dailyReview ? <>
               <div className="coachReviewBody">
                 <h4>{dailyReview.headline}</h4>
@@ -2838,6 +2866,7 @@ export default function App() {
               <p>When the day is ready, the coach will compare it with your recent training, nutrition, activity, weight trend, and saved coaching notes.</p>
               <button className="primary submitReviewButton" onClick={() => void submitDailyReview()} disabled={dailyReviewSubmitting}>{dailyReviewSubmitting ? 'Reviewing your day...' : 'Submit day for review'}</button>
               <small>Save any manual daily-number changes first. Workout results are saved as you log them.</small>
+            </div>}
             </div>}
           </section>
           <details className="secondaryTools dayOptions">
