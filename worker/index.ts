@@ -38,6 +38,14 @@ type AnalyzeRequest = {
 
 type DailyReviewRequest = { date?: unknown }
 type CoachMessageRequest = { date?: unknown; message?: unknown }
+type CoachRecommendationRequest = {
+  date?: unknown
+  recommendationIndex?: unknown
+  action?: unknown
+  scheduleItemId?: unknown
+  expectedType?: unknown
+  expectedTarget?: unknown
+}
 type OpenAIResponse = {
   id?: string
   output_text?: string
@@ -663,11 +671,29 @@ const dailyReviewSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['exercise', 'recommendation', 'reason'],
+        required: ['exercise_id', 'exercise', 'recommendation', 'reason', 'proposed_change'],
         properties: {
+          exercise_id: { type: 'string' },
           exercise: { type: 'string' },
           recommendation: { type: 'string' },
           reason: { type: 'string' },
+          proposed_change: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['action', 'type', 'count', 'count_unit', 'sets', 'reps', 'seconds', 'distance', 'distance_unit', 'weight'],
+            properties: {
+              action: { type: 'string', enum: ['update_target', 'no_change'] },
+              type: { anyOf: [{ type: 'string', enum: ['count', 'sets', 'duration', 'distance', 'for-time', 'weighted'] }, { type: 'null' }] },
+              count: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+              count_unit: { anyOf: [{ type: 'string', enum: ['reps', 'steps'] }, { type: 'null' }] },
+              sets: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+              reps: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+              seconds: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+              distance: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+              distance_unit: { anyOf: [{ type: 'string', enum: ['mi', 'km'] }, { type: 'null' }] },
+              weight: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+            },
+          },
         },
       },
     },
@@ -683,6 +709,44 @@ const coachInstructions = [
   'Recognize progress without cheerleading. Give specific next-session recommendations and say when the evidence is insufficient.',
   'Respect every active safety/modification note. Do not diagnose; calmly flag genuine injury or safety concerns when supported by the record.',
 ].join(' ')
+
+type ProposedTarget = { type: TargetType; target: Record<string, string | number> }
+
+function positiveNumber(value: unknown, minimum = 0) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum ? value : null
+}
+
+function proposedTargetFromRecommendation(value: unknown): ProposedTarget | null {
+  if (!isRecord(value) || !isRecord(value.proposed_change) || value.proposed_change.action !== 'update_target') return null
+  const change = value.proposed_change
+  if (typeof change.type !== 'string' || !['count', 'sets', 'duration', 'distance', 'for-time', 'weighted'].includes(change.type)) return null
+  const type = change.type as TargetType
+  if (type === 'count') {
+    const count = positiveNumber(change.count, 1)
+    return count === null ? null : { type, target: { count: Math.round(count), countUnit: change.count_unit === 'steps' ? 'steps' : 'reps' } }
+  }
+  if (type === 'sets') {
+    const sets = positiveNumber(change.sets, 1)
+    const reps = positiveNumber(change.reps, 1)
+    return sets === null || reps === null ? null : { type, target: { sets: Math.round(sets), reps: Math.round(reps) } }
+  }
+  if (type === 'duration') {
+    const seconds = positiveNumber(change.seconds, 1)
+    return seconds === null ? null : { type, target: { seconds: Math.round(seconds) } }
+  }
+  if (type === 'distance') {
+    const distance = positiveNumber(change.distance, 0.01)
+    return distance === null ? null : { type, target: { distance, unit: change.distance_unit === 'km' ? 'km' : 'mi' } }
+  }
+  if (type === 'for-time') {
+    const count = positiveNumber(change.count, 1)
+    return count === null ? null : { type, target: { count: Math.round(count) } }
+  }
+  const sets = positiveNumber(change.sets, 1)
+  const reps = positiveNumber(change.reps, 1)
+  const weight = positiveNumber(change.weight, 0)
+  return sets === null || reps === null || weight === null ? null : { type, target: { sets: Math.round(sets), reps: Math.round(reps), weight } }
+}
 
 async function callOpenAI(body: Record<string, unknown>, env: Env) {
   const response = await fetch('https://api.openai.com/v1/responses', {
@@ -704,6 +768,116 @@ function reviewText(review: Record<string, unknown>) {
   return [...sections, actions].filter(Boolean).join('\n\n')
 }
 
+type DailyReviewRow = {
+  id: string
+  date: string
+  model: string
+  headline: string
+  review_text: string
+  structured_review: string
+  created_at?: string
+  updated_at?: string
+}
+
+type FutureScheduleItem = {
+  id: string
+  exercise_id: string
+  date: string
+  type: string
+  target: string
+}
+
+type RecommendationDecision = {
+  recommendation_index: number
+  recommendation_json: string
+  decision: 'applied' | 'dismissed'
+  schedule_item_id: string | null
+  scheduled_date: string | null
+  before_type: string | null
+  before_target: string | null
+  after_type: string | null
+  after_target: string | null
+}
+
+function reviewRecommendations(structuredReview: unknown) {
+  if (!isRecord(structuredReview) || !Array.isArray(structuredReview.exercise_recommendations)) return []
+  return structuredReview.exercise_recommendations.filter(isRecord)
+}
+
+async function futureScheduleItems(userId: string, reviewDate: string, exerciseIds: string[], env: Env) {
+  const uniqueExerciseIds = Array.from(new Set(exerciseIds.filter(Boolean)))
+  if (!uniqueExerciseIds.length) return new Map<string, FutureScheduleItem>()
+  const result = await env.DB.prepare(`
+    SELECT si.id, si.exercise_id, sd.date, si.type, si.target
+    FROM schedule_items si
+    JOIN schedule_days sd ON sd.id = si.schedule_day_id AND sd.user_id = si.user_id
+    WHERE si.user_id = ? AND sd.date > ? AND si.done = 0 AND sd.skipped = 0
+      AND si.exercise_id IN (${uniqueExerciseIds.map(() => '?').join(', ')})
+    ORDER BY sd.date ASC, si.created_at ASC
+  `).bind(userId, reviewDate, ...uniqueExerciseIds).all<FutureScheduleItem>()
+  const firstByExercise = new Map<string, FutureScheduleItem>()
+  result.results.forEach((item) => {
+    if (!firstByExercise.has(item.exercise_id)) firstByExercise.set(item.exercise_id, item)
+  })
+  return firstByExercise
+}
+
+async function enrichDailyReview(review: DailyReviewRow, user: AuthenticatedUser, env: Env) {
+  const structured = parseStoredJson(review.structured_review)
+  const recommendations = reviewRecommendations(structured)
+  const decisions = await env.DB.prepare(`
+    SELECT recommendation_index, recommendation_json, decision, schedule_item_id, scheduled_date,
+      before_type, before_target, after_type, after_target
+    FROM coach_recommendation_decisions
+    WHERE user_id = ? AND review_id = ?
+  `).bind(user.id, review.id).all<RecommendationDecision>()
+  const decisionByRecommendation = new Map(decisions.results.map((decision) => [`${decision.recommendation_index}:${decision.recommendation_json}`, decision]))
+  const futureByExercise = await futureScheduleItems(user.id, review.date, recommendations.map((recommendation) => typeof recommendation.exercise_id === 'string' ? recommendation.exercise_id : ''), env)
+  const enrichedRecommendations = recommendations.map((recommendation, recommendationIndex) => {
+    const recommendationJson = JSON.stringify(recommendation)
+    const decision = decisionByRecommendation.get(`${recommendationIndex}:${recommendationJson}`)
+    if (decision) {
+      return {
+        ...recommendation,
+        plan_action: {
+          status: decision.decision,
+          can_apply: false,
+          next_date: decision.scheduled_date,
+          schedule_item_id: decision.schedule_item_id,
+          current_type: decision.before_type,
+          current_target: parseStoredJson(decision.before_target),
+          proposed_type: decision.after_type,
+          proposed_target: parseStoredJson(decision.after_target),
+          message: decision.decision === 'applied' ? 'Applied to the next scheduled session.' : 'Recommendation dismissed.',
+        },
+      }
+    }
+    const proposal = proposedTargetFromRecommendation(recommendation)
+    if (!proposal) return { ...recommendation, plan_action: { status: 'no_change', can_apply: false, message: 'No target change recommended.' } }
+    const exerciseId = typeof recommendation.exercise_id === 'string' ? recommendation.exercise_id : ''
+    const nextItem = futureByExercise.get(exerciseId)
+    if (!nextItem) return { ...recommendation, plan_action: { status: 'unavailable', can_apply: false, proposed_type: proposal.type, proposed_target: proposal.target, message: 'No future session containing this exercise is scheduled.' } }
+    return {
+      ...recommendation,
+      plan_action: {
+        status: 'pending',
+        can_apply: true,
+        next_date: nextItem.date,
+        schedule_item_id: nextItem.id,
+        current_type: nextItem.type,
+        current_target: parseStoredJson(nextItem.target),
+        proposed_type: proposal.type,
+        proposed_target: proposal.target,
+        message: 'Review this change before applying it.',
+      },
+    }
+  })
+  return {
+    ...review,
+    structured_review: isRecord(structured) ? { ...structured, exercise_recommendations: enrichedRecommendations } : structured,
+  }
+}
+
 async function submitDailyReview(request: Request, user: AuthenticatedUser, env: Env) {
   const body = await request.json<DailyReviewRequest>()
   const date = requireDate(body.date)
@@ -714,7 +888,7 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
     store: false,
     reasoning: { effort: 'low' },
     max_output_tokens: 1800,
-    instructions: `${coachInstructions} Produce a daily review using the supplied JSON context. The tomorrow field must identify the next scheduled day, including its date, or clearly say none is scheduled.`,
+    instructions: `${coachInstructions} Produce a daily review using the supplied JSON context. The tomorrow field must identify the next scheduled day, including its date, or clearly say none is scheduled. For every exercise recommendation, copy the exact exerciseId from today's workout. Use proposed_change.action update_target only when recommending a specific next-session target that can be represented by the supplied target types; otherwise use no_change and set every other proposed_change field to null. Never propose a load outside the user's available equipment.`,
     input: JSON.stringify(context),
     text: { format: { type: 'json_schema', name: 'daily_fitness_review', strict: true, schema: dailyReviewSchema } },
   }, env)
@@ -737,22 +911,82 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
       openai_response_id = excluded.openai_response_id,
       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `).bind(reviewId, user.id, date, model, String(structured.headline || 'Daily review'), reviewText(structured), JSON.stringify(structured), JSON.stringify(context), response.id ?? null).run()
-  return json({ review: { id: reviewId, date, model, ...structured, reviewText: reviewText(structured) } })
+  const review = await enrichDailyReview({ id: reviewId, date, model, headline: String(structured.headline || 'Daily review'), review_text: reviewText(structured), structured_review: JSON.stringify(structured) }, user, env)
+  return json({ review })
 }
 
 async function getDailyCoach(date: string, user: AuthenticatedUser, env: Env) {
   const review = await env.DB.prepare(`
     SELECT id, date, model, headline, review_text, structured_review, created_at, updated_at
     FROM daily_reviews WHERE user_id = ? AND date = ?
-  `).bind(user.id, date).first<Record<string, unknown>>()
+  `).bind(user.id, date).first<DailyReviewRow>()
   if (!review) return json({ review: null, messages: [] })
   const messages = await env.DB.prepare(`
     SELECT id, role, content, created_at FROM coach_messages
     WHERE user_id = ? AND review_id = ? ORDER BY created_at ASC
   `).bind(user.id, review.id).all<Record<string, unknown>>()
   return json({
-    review: { ...review, structured_review: parseStoredJson(review.structured_review) },
+    review: await enrichDailyReview(review, user, env),
     messages: messages.results,
+  })
+}
+
+async function decideCoachRecommendation(request: Request, user: AuthenticatedUser, env: Env) {
+  const body = await request.json<CoachRecommendationRequest>()
+  const date = requireDate(body.date)
+  if (!Number.isInteger(body.recommendationIndex) || (body.recommendationIndex as number) < 0) throw new HttpError(400, 'A valid recommendation is required.')
+  if (body.action !== 'apply' && body.action !== 'dismiss') throw new HttpError(400, 'Choose apply or dismiss.')
+  const review = await env.DB.prepare(`
+    SELECT id, date, model, headline, review_text, structured_review, created_at, updated_at
+    FROM daily_reviews WHERE user_id = ? AND date = ?
+  `).bind(user.id, date).first<DailyReviewRow>()
+  if (!review) throw new HttpError(404, 'The daily review was not found.')
+  const structured = parseStoredJson(review.structured_review)
+  const recommendations = reviewRecommendations(structured)
+  const recommendationIndex = body.recommendationIndex as number
+  const recommendation = recommendations[recommendationIndex]
+  if (!recommendation) throw new HttpError(404, 'That recommendation is no longer available.')
+  const recommendationJson = JSON.stringify(recommendation)
+  const existing = await env.DB.prepare(`
+    SELECT id FROM coach_recommendation_decisions
+    WHERE user_id = ? AND review_id = ? AND recommendation_index = ? AND recommendation_json = ?
+  `).bind(user.id, review.id, recommendationIndex, recommendationJson).first<{ id: string }>()
+  if (existing) return json({ review: await enrichDailyReview(review, user, env) })
+
+  const decisionId = await sha256Hex(`${user.id}:${review.id}:${recommendationIndex}:${recommendationJson}`)
+  if (body.action === 'dismiss') {
+    await env.DB.prepare(`
+      INSERT INTO coach_recommendation_decisions
+        (id, user_id, review_id, recommendation_index, recommendation_json, decision)
+      VALUES (?, ?, ?, ?, ?, 'dismissed')
+    `).bind(decisionId, user.id, review.id, recommendationIndex, recommendationJson).run()
+    return json({ review: await enrichDailyReview(review, user, env) })
+  }
+
+  const proposal = proposedTargetFromRecommendation(recommendation)
+  if (!proposal) throw new HttpError(409, 'This recommendation does not contain a target change.')
+  const exerciseId = typeof recommendation.exercise_id === 'string' ? recommendation.exercise_id : ''
+  const nextItem = (await futureScheduleItems(user.id, date, [exerciseId], env)).get(exerciseId)
+  if (!nextItem) throw new HttpError(409, 'No future session containing this exercise is scheduled.')
+  const currentTarget = parseStoredJson(nextItem.target)
+  if (body.scheduleItemId !== nextItem.id || body.expectedType !== nextItem.type || JSON.stringify(body.expectedTarget) !== JSON.stringify(currentTarget)) {
+    throw new HttpError(409, 'The next session changed. Reopen the review to see the current target.')
+  }
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE schedule_items SET type = ?, target = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ? AND user_id = ?
+    `).bind(proposal.type, JSON.stringify(proposal.target), nextItem.id, user.id),
+    env.DB.prepare(`
+      INSERT INTO coach_recommendation_decisions
+        (id, user_id, review_id, recommendation_index, recommendation_json, decision, schedule_item_id,
+         scheduled_date, before_type, before_target, after_type, after_target)
+      VALUES (?, ?, ?, ?, ?, 'applied', ?, ?, ?, ?, ?, ?)
+    `).bind(decisionId, user.id, review.id, recommendationIndex, recommendationJson, nextItem.id, nextItem.date, nextItem.type, JSON.stringify(currentTarget), proposal.type, JSON.stringify(proposal.target)),
+  ])
+  return json({
+    review: await enrichDailyReview(review, user, env),
+    updatedItem: { id: nextItem.id, date: nextItem.date, type: proposal.type, target: proposal.target },
   })
 }
 
@@ -854,6 +1088,7 @@ async function handleApi(request: Request, env: Env) {
   if (request.method === 'GET' && url.pathname === '/api/health-sync/status') return getMobileSyncStatus(user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/submit-daily-review') return submitDailyReview(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/coach-message') return sendCoachMessage(request, user, env)
+  if (request.method === 'POST' && url.pathname === '/api/functions/coach-recommendation') return decideCoachRecommendation(request, user, env)
   if (request.method === 'GET' && url.pathname === '/api/coach/day') return getDailyCoach(requireDate(url.searchParams.get('date')), user, env)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, database: 'D1', user: user.email })
   throw new HttpError(404, 'Not found.')

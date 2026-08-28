@@ -43,7 +43,18 @@ type MobileSyncStatus = {
   background_permission: boolean
   last_sync_trigger: string | null
 }
-type ExerciseRecommendation = { exercise: string; recommendation: string; reason: string }
+type RecommendationPlanAction = {
+  status: 'pending' | 'applied' | 'dismissed' | 'no_change' | 'unavailable'
+  can_apply: boolean
+  message: string
+  next_date?: string | null
+  schedule_item_id?: string | null
+  current_type?: TT | null
+  current_target?: Target | null
+  proposed_type?: TT | null
+  proposed_target?: Target | null
+}
+type ExerciseRecommendation = { exercise_id?: string; exercise: string; recommendation: string; reason: string; plan_action?: RecommendationPlanAction }
 type DailyReview = {
   id: string
   date: string
@@ -964,6 +975,7 @@ export default function App() {
   const [dailyReviewSubmitting, setDailyReviewSubmitting] = useState(false)
   const [coachDraft, setCoachDraft] = useState('')
   const [coachSending, setCoachSending] = useState(false)
+  const [recommendationDecisionSaving, setRecommendationDecisionSaving] = useState<Record<number, 'apply' | 'dismiss'>>({})
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, boolean>>({})
   const [expandedPlanItems, setExpandedPlanItems] = useState<Record<string, boolean>>({})
   const [draggedPlanDayId, setDraggedPlanDayId] = useState<string | null>(null)
@@ -1129,6 +1141,7 @@ export default function App() {
     let active = true
     setDailyReviewLoading(true)
     setCoachDraft('')
+    setRecommendationDecisionSaving({})
     loadCoachDay(selected).then((payload) => {
       if (!active) return
       setDailyReview(dailyReviewFromPayload(payload?.review))
@@ -1877,6 +1890,50 @@ export default function App() {
     }
     setDailyReview(review)
     pushToast(dailyReview ? 'Daily review refreshed.' : 'Daily review ready.')
+  }
+
+  const decideRecommendation = async (recommendationIndex: number, action: 'apply' | 'dismiss') => {
+    if (!supabase || !user || !dailyReview || recommendationDecisionSaving[recommendationIndex]) return
+    const recommendation = dailyReview.exercise_recommendations[recommendationIndex]
+    const planAction = recommendation?.plan_action
+    if (!recommendation || !planAction) return
+    setRecommendationDecisionSaving((current) => ({ ...current, [recommendationIndex]: action }))
+    const { data, error } = await supabase.functions.invoke('coach-recommendation', {
+      body: {
+        date: selected,
+        recommendationIndex,
+        action,
+        scheduleItemId: planAction.schedule_item_id,
+        expectedType: planAction.current_type,
+        expectedTarget: planAction.current_target,
+      },
+    })
+    setRecommendationDecisionSaving((current) => {
+      const next = { ...current }
+      delete next[recommendationIndex]
+      return next
+    })
+    const payload = data && typeof data === 'object' ? data as Record<string, unknown> : null
+    const review = dailyReviewFromPayload(payload?.review)
+    if (error || !review) {
+      pushToast(error?.message || 'Could not update this recommendation.')
+      return
+    }
+    setDailyReview(review)
+    const updatedItem = payload?.updatedItem
+    if (updatedItem && typeof updatedItem === 'object') {
+      const row = updatedItem as Record<string, unknown>
+      if (typeof row.id === 'string' && typeof row.date === 'string' && typeof row.type === 'string' && validTargetTypes.has(row.type as TT) && row.target && typeof row.target === 'object') {
+        setState((current) => ({
+          ...current,
+          schedule: current.schedule.map((scheduledDay) => scheduledDay.date !== row.date ? scheduledDay : {
+            ...scheduledDay,
+            items: scheduledDay.items.map((item) => item.id === row.id ? { ...item, type: row.type as TT, target: clone(row.target as Target) } : item),
+          }),
+        }))
+      }
+    }
+    pushToast(action === 'apply' ? 'Next session updated.' : 'Recommendation dismissed.')
   }
 
   const sendCoachMessage = async () => {
@@ -2854,7 +2911,25 @@ export default function App() {
                   {dailyReview.tomorrow && <div><strong>Next up</strong><p>{dailyReview.tomorrow}</p></div>}
                 </div>
                 {dailyReview.action_items.length > 0 && <div className="coachActions"><strong>Do this next</strong><ul>{dailyReview.action_items.map((action, index) => <li key={`${action}-${index}`}>{action}</li>)}</ul></div>}
-                {dailyReview.exercise_recommendations.length > 0 && <details className="coachExerciseRecommendations"><summary>Exercise recommendations</summary><div className="stack compactStack">{dailyReview.exercise_recommendations.map((recommendation, index) => <div key={`${recommendation.exercise}-${index}`}><strong>{recommendation.exercise}</strong><p>{recommendation.recommendation}</p><small>{recommendation.reason}</small></div>)}</div></details>}
+                {dailyReview.exercise_recommendations.length > 0 && <details className="coachExerciseRecommendations"><summary>Exercise recommendations</summary><div className="stack compactStack">{dailyReview.exercise_recommendations.map((recommendation, index) => {
+                  const planAction = recommendation.plan_action
+                  const currentSummary = planAction?.current_type && planAction.current_target ? workoutSummary(planAction.current_type, planAction.current_target) : ''
+                  const proposedSummary = planAction?.proposed_type && planAction.proposed_target ? workoutSummary(planAction.proposed_type, planAction.proposed_target) : ''
+                  const savingAction = recommendationDecisionSaving[index]
+                  return <div key={`${recommendation.exercise}-${index}`} className={`coachRecommendationCard ${planAction?.status === 'dismissed' ? 'dismissedRecommendation' : ''}`}>
+                    <div className="coachRecommendationHeading"><strong>{recommendation.exercise}</strong>{planAction && planAction.status !== 'pending' && <span className="recommendationStatus">{planAction.status === 'no_change' ? 'No change' : planAction.status}</span>}</div>
+                    <p>{recommendation.recommendation}</p>
+                    <small>{recommendation.reason}</small>
+                    {planAction ? <div className="recommendationPlanAction">
+                      {currentSummary && proposedSummary && <div className="targetChangePreview"><span>{planAction.next_date ? fmtShort(planAction.next_date) : 'Next session'}</span><strong>{currentSummary} → {proposedSummary}</strong></div>}
+                      {!currentSummary && planAction.message && <p className="recommendationActionMessage">{planAction.message}</p>}
+                      {(planAction.status === 'pending' || planAction.status === 'no_change' || planAction.status === 'unavailable') && <div className="recommendationButtons">
+                        {planAction.can_apply && <button className="primary" onClick={() => void decideRecommendation(index, 'apply')} disabled={Boolean(savingAction)}>{savingAction === 'apply' ? 'Applying...' : 'Apply to next session'}</button>}
+                        <button className="pill" onClick={() => void decideRecommendation(index, 'dismiss')} disabled={Boolean(savingAction)}>{savingAction === 'dismiss' ? 'Dismissing...' : 'Dismiss'}</button>
+                      </div>}
+                    </div> : <p className="recommendationActionMessage">Refresh this review to enable plan actions.</p>}
+                  </div>
+                })}</div></details>}
               </div>
               <button className="pill coachRefreshButton" onClick={() => void submitDailyReview()} disabled={dailyReviewSubmitting}>{dailyReviewSubmitting ? 'Reviewing...' : 'Refresh review'}</button>
               <div className="coachConversation">

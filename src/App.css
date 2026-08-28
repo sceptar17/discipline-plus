@@ -1223,6 +1223,66 @@
   line-height: 1.45;
 }
 
+.coachRecommendationCard {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.coachRecommendationHeading,
+.recommendationButtons,
+.targetChangePreview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.recommendationStatus {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.recommendationPlanAction {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.targetChangePreview {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.targetChangePreview span,
+.recommendationActionMessage {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.recommendationButtons {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.recommendationButtons button {
+  min-height: 42px;
+}
+
+.dismissedRecommendation {
+  opacity: 0.62;
+}
+
 .coachRefreshButton {
   align-self: flex-start;
 }
