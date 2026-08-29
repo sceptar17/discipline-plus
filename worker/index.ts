@@ -887,7 +887,7 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
     model,
     store: false,
     reasoning: { effort: 'low' },
-    max_output_tokens: 1800,
+    max_output_tokens: 4000,
     instructions: `${coachInstructions} Produce a daily review using the supplied JSON context. The tomorrow field must identify the next scheduled day, including its date, or clearly say none is scheduled. For every exercise recommendation, copy the exact exerciseId from today's workout. Use proposed_change.action update_target only when recommending a specific next-session target that can be represented by the supplied target types; otherwise use no_change and set every other proposed_change field to null. Never propose a load outside the user's available equipment.`,
     input: JSON.stringify(context),
     text: { format: { type: 'json_schema', name: 'daily_fitness_review', strict: true, schema: dailyReviewSchema } },
@@ -898,6 +898,12 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
   try {
     structured = JSON.parse(content) as Record<string, unknown>
   } catch {
+    console.error(JSON.stringify({
+      message: 'OpenAI coach returned invalid JSON',
+      responseId: response.id ?? null,
+      contentLength: content.length,
+      contentTail: content.slice(-250),
+    }))
     throw new HttpError(502, 'The coach returned an invalid review.')
   }
   const reviewId = `daily-review-${user.id}-${date}`
