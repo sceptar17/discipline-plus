@@ -58,6 +58,17 @@ class HealthSyncEngine(context: Context) {
     }
 
     suspend fun sync(lookbackDays: Int = 14, trigger: String = "manual", backgroundPermission: Boolean? = null): String {
+        val zone = ZoneId.systemDefault()
+        val dates = (lookbackDays.coerceIn(0, 14) downTo 0).map { offset ->
+            LocalDate.now(zone).minusDays(offset.toLong())
+        }
+        return syncDates(dates, trigger, backgroundPermission)
+    }
+
+    suspend fun syncDate(date: LocalDate, trigger: String = "web", backgroundPermission: Boolean? = null): String =
+        syncDates(listOf(date), trigger, backgroundPermission)
+
+    private suspend fun syncDates(dates: List<LocalDate>, trigger: String, backgroundPermission: Boolean?): String {
         val token = tokenStore.read() ?: error("Pair this phone first.")
         if (HealthConnectClient.getSdkStatus(appContext) != HealthConnectClient.SDK_AVAILABLE) {
             error("Health Connect is unavailable.")
@@ -65,8 +76,8 @@ class HealthSyncEngine(context: Context) {
         val client = HealthConnectClient.getOrCreate(appContext)
         val zone = ZoneId.systemDefault()
         val days = JSONArray()
-        for (offset in lookbackDays.coerceIn(0, 14) downTo 0) {
-            days.put(readDay(client, LocalDate.now(zone).minusDays(offset.toLong()), zone))
+        for (date in dates) {
+            days.put(readDay(client, date, zone))
         }
         val response = postJson(
             "$syncBaseUrl/sync",

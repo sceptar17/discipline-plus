@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import type { User } from './lib/cloudflare'
+import type { AiDiagnostic, User } from './lib/cloudflare'
 import * as XLSX from 'xlsx'
 import './App.css'
-import { hasSupabaseEnv, loadCoachDay, loadHealthSyncStatus, supabase, supabaseUrl } from './lib/cloudflare'
+import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, supabase, supabaseUrl } from './lib/cloudflare'
 
 type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
@@ -90,6 +90,7 @@ type ConfirmState =
   | null
 
 const KEY = 'fitness-tracker-v1'
+const HEALTH_SYNC_DATE_KEY = 'discipline-plus-health-sync-date'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const EXERCISE_CATEGORY_OPTIONS = ['Bodyweight', 'Dumbbell']
 const HABIT_CATEGORY_OPTIONS = ['Spiritual', 'Mind', 'Home', 'Health']
@@ -1006,11 +1007,14 @@ export default function App() {
   const [mobilePairingLoading, setMobilePairingLoading] = useState(false)
   const [mobileSyncStatus, setMobileSyncStatus] = useState<MobileSyncStatus | null>(null)
   const [mobileSyncStatusLoading, setMobileSyncStatusLoading] = useState(false)
+  const [aiDiagnostics, setAiDiagnostics] = useState<AiDiagnostic[]>([])
+  const [aiDiagnosticsLoading, setAiDiagnosticsLoading] = useState(false)
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
   const [openDaySections, setOpenDaySections] = useState<Record<DaySection, boolean>>({ workout: true, health: false, coach: false })
   const [itemDrafts, setItemDrafts] = useState<Record<string, ItemDraft>>({})
   const [dailyHealthDraft, setDailyHealthDraft] = useState<DailyHealthDraft>(() => emptyDailyHealthDraft())
   const [dailyHealthLoading, setDailyHealthLoading] = useState(false)
+  const [dailyHealthRefreshKey, setDailyHealthRefreshKey] = useState(0)
   const [dailyHealthSaving, setDailyHealthSaving] = useState(false)
   const [dailyReview, setDailyReview] = useState<DailyReview | null>(null)
   const [coachMessages, setCoachMessages] = useState<CoachMessage[]>([])
@@ -1152,7 +1156,7 @@ export default function App() {
     }
     void loadDailyHealth()
     return () => { active = false }
-  }, [selected, user])
+  }, [dailyHealthRefreshKey, selected, user])
   useEffect(() => {
     if (!user) {
       setMobileSyncStatus(null)
@@ -1167,11 +1171,35 @@ export default function App() {
     }).finally(() => {
       if (active) setMobileSyncStatusLoading(false)
     })
-    if (window.location.search.includes('healthSynced=')) {
-      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`)
+    const returnParams = new URLSearchParams(window.location.search)
+    if (returnParams.has('healthSynced')) {
+      const returnedDate = returnParams.get('date') || sessionStorage.getItem(HEALTH_SYNC_DATE_KEY)
+      if (returnedDate && /^\d{4}-\d{2}-\d{2}$/.test(returnedDate)) {
+        setSelected(returnedDate)
+        setMonth(monthKey(returnedDate))
+      }
+      sessionStorage.removeItem(HEALTH_SYNC_DATE_KEY)
+      setDailyHealthRefreshKey((current) => current + 1)
+      returnParams.delete('healthSynced')
+      returnParams.delete('date')
+      const remainingQuery = returnParams.toString()
+      window.history.replaceState({}, '', `${window.location.pathname}${remainingQuery ? `?${remainingQuery}` : ''}${window.location.hash}`)
     }
     return () => { active = false }
   }, [user])
+  useEffect(() => {
+    if (!user || tab !== 'settings' || settingsSection !== 'integrations') return
+    let active = true
+    setAiDiagnosticsLoading(true)
+    loadAiDiagnostics().then((payload) => {
+      if (active) setAiDiagnostics(Array.isArray(payload?.diagnostics) ? payload.diagnostics : [])
+    }).catch((error) => {
+      console.error('AI diagnostics load failed', error)
+    }).finally(() => {
+      if (active) setAiDiagnosticsLoading(false)
+    })
+    return () => { active = false }
+  }, [settingsSection, tab, user])
   useEffect(() => {
     if (daySectionsDateRef.current === selected) return
     daySectionsDateRef.current = selected
@@ -1935,7 +1963,7 @@ export default function App() {
     const review = dailyReviewFromPayload(data && typeof data === 'object' && 'review' in data ? data.review : null)
     if (error || !review) {
       console.error('daily review failed', error)
-      pushToast(error?.message || 'The coach could not review this day.')
+      pushToast(`${error?.message || 'The coach could not review this day.'}${error?.diagnosticId ? ` Reference ${error.diagnosticId.slice(0, 8)}.` : ''}`)
       return
     }
     setDailyReview(review)
@@ -1997,7 +2025,7 @@ export default function App() {
       : []
     if (error || messages.length !== 2) {
       console.error('coach message failed', error)
-      pushToast(error?.message || 'The coach could not answer right now.')
+      pushToast(`${error?.message || 'The coach could not answer right now.'}${error?.diagnosticId ? ` Reference ${error.diagnosticId.slice(0, 8)}.` : ''}`)
       return
     }
     setCoachDraft('')
@@ -2023,7 +2051,8 @@ export default function App() {
       window.location.assign(fallback)
       return
     }
-    window.location.assign(`intent://fitness.aparishhouse.com/sync-health#Intent;scheme=https;package=com.aparishhouse.disciplineplus.sync;S.browser_fallback_url=${encodeURIComponent(fallback)};end`)
+    sessionStorage.setItem(HEALTH_SYNC_DATE_KEY, selected)
+    window.location.assign(`intent://fitness.aparishhouse.com/sync-health?date=${encodeURIComponent(selected)}#Intent;scheme=https;package=com.aparishhouse.disciplineplus.sync;S.browser_fallback_url=${encodeURIComponent(fallback)};end`)
   }
 
   const upsertDay = async (date: string, fx: (d0: Day) => Day) => {
@@ -3540,10 +3569,10 @@ export default function App() {
                 <strong>Android Health Connect</strong>
                 <p>Automatically import MacroFactor nutrition, phone and Pixel Watch steps, and body weight about hourly through the companion app.</p>
               </div>
-              <a className="primary downloadButton" href="/downloads/discipline-plus-sync.apk" download>Install Android helper 1.2</a>
+              <a className="primary downloadButton" href="/downloads/discipline-plus-sync.apk" download>Install Android helper 1.3</a>
               {mobileSyncStatus && <div className="syncStatusSummary settingsSyncStatus">
                 <p><strong>Last successful sync:</strong> {syncTimeLabel(mobileSyncStatus.last_sync_success_at ?? mobileSyncStatus.last_used_at)}</p>
-                <small>{mobileSyncStatus.app_version ? `Installed helper last reported version ${mobileSyncStatus.app_version}.` : 'Install version 1.2, then open it once to enable diagnostics and one-tap sync.'}</small>
+                <small>{mobileSyncStatus.app_version ? `Installed helper last reported version ${mobileSyncStatus.app_version}.` : 'Install version 1.3, then open it once to enable diagnostics and one-tap sync.'}</small>
                 {mobileSyncStatus.last_sync_error && <p className="syncWarning">{mobileSyncStatus.last_sync_error}</p>}
               </div>}
               {mobilePairing ? <div className="pairingCodeBox">
@@ -3559,6 +3588,17 @@ export default function App() {
               <strong>Cloudflare</strong>
               <p>{hasSupabaseEnv ? `Connected backend: ${supabaseUrl}` : 'The Cloudflare backend is not configured in this build.'}</p>
               <span className={hasSupabaseEnv ? 'status' : 'status warn'}>{hasSupabaseEnv ? 'Workers + D1 ready' : 'Backend unavailable'}</span>
+            </div>
+            <div className="card stack">
+              <div><strong>AI coach diagnostics</strong><p>Recent sanitized coach requests. Health data, prompts, responses, and API credentials are never included.</p></div>
+              {aiDiagnosticsLoading ? <p>Loading diagnostics...</p> : aiDiagnostics.length ? <div className="aiDiagnosticList">
+                {aiDiagnostics.map((entry) => <div className={`aiDiagnosticItem ${entry.status}`} key={entry.id}>
+                  <div className="aiDiagnosticHeading"><strong>{entry.status === 'succeeded' ? 'Succeeded' : 'Failed'} · {entry.operation === 'daily_review' ? 'Daily review' : 'Coach message'}</strong><span>{syncTimeLabel(entry.created_at)}</span></div>
+                  <p>{entry.message}</p>
+                  <small>{entry.model}{entry.review_date ? ` · ${entry.review_date}` : ''}{entry.provider_status ? ` · HTTP ${entry.provider_status}` : ''}{entry.error_code ? ` · ${entry.error_code}` : ''} · {entry.duration_ms.toLocaleString()} ms</small>
+                  {(entry.request_id || entry.response_id) && <small className="diagnosticReference">Reference: {entry.request_id || entry.response_id}</small>}
+                </div>)}
+              </div> : <p>No coach diagnostics have been recorded yet. The next review or follow-up will appear here.</p>}
             </div>
           </div>}
           {settingsSection === 'profile' && <div className="stack">

@@ -9,7 +9,22 @@ export type User = {
   }
 }
 
-type ClientError = Error & { context?: Response }
+export type AiDiagnostic = {
+  id: string
+  operation: 'daily_review' | 'coach_message'
+  review_date: string | null
+  status: 'succeeded' | 'failed'
+  model: string
+  provider_status: number | null
+  error_code: string | null
+  message: string
+  request_id: string | null
+  response_id: string | null
+  duration_ms: number
+  created_at: string
+}
+
+type ClientError = Error & { context?: Response; diagnosticId?: string }
 type DynamicRow = {
   id: string
   user_id: string
@@ -104,9 +119,15 @@ export async function loadHealthSyncStatus() {
   return parseResponse(response) as Promise<{ device?: unknown } | null>
 }
 
-function clientError(message: string, context?: Response): ClientError {
+export async function loadAiDiagnostics() {
+  const response = await fetch(apiUrl('/api/ai-diagnostics'), { credentials: 'include' })
+  return parseResponse(response) as Promise<{ diagnostics?: AiDiagnostic[] } | null>
+}
+
+function clientError(message: string, context?: Response, diagnosticId?: string): ClientError {
   const error = new Error(message) as ClientError
   error.context = context
+  error.diagnosticId = diagnosticId
   return error
 }
 
@@ -115,10 +136,11 @@ async function parseResponse(response: Response) {
   const payload = await response.json().catch(() => null) as {
     data?: DynamicRow[]
     error?: string
+    diagnosticId?: string
   } | null
 
   if (!response.ok) {
-    throw clientError(payload?.error || `Request failed with status ${response.status}.`, context)
+    throw clientError(payload?.error || `Request failed with status ${response.status}.`, context, payload?.diagnosticId)
   }
 
   return payload
@@ -237,7 +259,10 @@ export const supabase = {
         const detail = payload && typeof payload === 'object' && 'error' in payload
           ? String(payload.error)
           : `Function failed with status ${response.status}.`
-        return { data: null, error: clientError(detail, context) }
+        const diagnosticId = payload && typeof payload === 'object' && 'diagnosticId' in payload
+          ? String(payload.diagnosticId)
+          : undefined
+        return { data: null, error: clientError(detail, context, diagnosticId) }
       }
       return { data: payload, error: null }
     },

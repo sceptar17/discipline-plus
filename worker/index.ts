@@ -38,6 +38,7 @@ type AnalyzeRequest = {
 
 type DailyReviewRequest = { date?: unknown }
 type CoachMessageRequest = { date?: unknown; message?: unknown }
+type AiOperation = 'daily_review' | 'coach_message'
 type CoachRecommendationRequest = {
   date?: unknown
   recommendationIndex?: unknown
@@ -48,12 +49,27 @@ type CoachRecommendationRequest = {
 }
 type OpenAIResponse = {
   id?: string
+  status?: 'completed' | 'failed' | 'in_progress' | 'cancelled' | 'queued' | 'incomplete'
+  error?: { code?: string; message?: string } | null
+  incomplete_details?: { reason?: string } | null
   output_text?: string
   output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
 }
 
+type AiDiagnosticTrace = {
+  id: string
+  userId: string
+  operation: AiOperation
+  reviewDate: string
+  model: string
+  providerStatus: number | null
+  requestId: string | null
+  responseId: string | null
+  durationMs: number
+}
+
 class HttpError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly diagnosticId?: string) {
     super(message)
   }
 }
@@ -191,6 +207,49 @@ function responseText(response: OpenAIResponse) {
     .map((item) => item.text?.trim())
     .filter(Boolean)
     .join('\n') ?? ''
+}
+
+function limitedText(value: unknown, fallback: string, limit = 500) {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, limit) : fallback
+}
+
+async function recordAiDiagnostic(
+  env: Env,
+  trace: AiDiagnosticTrace,
+  status: 'succeeded' | 'failed',
+  message: string,
+  errorCode: string | null = null,
+) {
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO ai_diagnostics (
+          id, user_id, operation, review_date, status, model, provider_status,
+          error_code, message, request_id, response_id, duration_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        trace.id, trace.userId, trace.operation, trace.reviewDate, status, trace.model,
+        trace.providerStatus, errorCode, limitedText(message, status === 'succeeded' ? 'Completed.' : 'Unknown coach error.'),
+        trace.requestId, trace.responseId, trace.durationMs,
+      ),
+      env.DB.prepare(`
+        DELETE FROM ai_diagnostics
+        WHERE user_id = ? AND id NOT IN (
+          SELECT id FROM ai_diagnostics WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
+        )
+      `).bind(trace.userId, trace.userId),
+    ])
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'AI diagnostic persistence failed', error: error instanceof Error ? error.message : String(error) }))
+  }
+}
+
+function openAiFailureMessage(status: number, errorCode: string | null) {
+  if (status === 429) return 'OpenAI temporarily rate-limited the coach. Please try again shortly.'
+  if (status === 401 || status === 403) return 'The coach API credentials need attention.'
+  if (status >= 500) return 'OpenAI had a temporary service problem. Please try again.'
+  if (errorCode === 'invalid_request_error') return 'OpenAI rejected the coach request. The diagnostic log has the details.'
+  return 'The coach could not complete the request. The diagnostic log has the details.'
 }
 
 function isTableName(value: unknown): value is TableName {
@@ -748,17 +807,66 @@ function proposedTargetFromRecommendation(value: unknown): ProposedTarget | null
   return sets === null || reps === null || weight === null ? null : { type, target: { sets: Math.round(sets), reps: Math.round(reps), weight } }
 }
 
-async function callOpenAI(body: Record<string, unknown>, env: Env) {
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!response.ok) {
-    console.error(JSON.stringify({ message: 'OpenAI coach request failed', status: response.status }))
-    throw new HttpError(502, 'The coach could not complete the review. Please try again.')
+async function callOpenAI(body: Record<string, unknown>, user: AuthenticatedUser, operation: AiOperation, reviewDate: string, env: Env) {
+  const startedAt = Date.now()
+  const diagnosticId = crypto.randomUUID()
+  const model = limitedText(body.model, env.OPENAI_COACH_MODEL || 'gpt-5.4-mini', 100)
+  const clientRequestId = `discipline-plus-${diagnosticId}`
+  let response: Response
+  try {
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+        'X-Client-Request-Id': clientRequestId,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (error) {
+    const trace: AiDiagnosticTrace = {
+      id: diagnosticId, userId: user.id, operation, reviewDate, model, providerStatus: null,
+      requestId: clientRequestId, responseId: null, durationMs: Date.now() - startedAt,
+    }
+    const message = limitedText(error instanceof Error ? error.message : String(error), 'Network request failed.')
+    await recordAiDiagnostic(env, trace, 'failed', message, 'network_error')
+    console.error(JSON.stringify({ message: 'OpenAI coach network request failed', operation, diagnosticId, error: message }))
+    throw new HttpError(502, 'The coach could not reach OpenAI. Please try again.', diagnosticId)
   }
-  return response.json<OpenAIResponse>()
+
+  const providerRequestId = response.headers.get('x-request-id')
+  const payload = await response.json<OpenAIResponse>().catch(() => null)
+  const trace: AiDiagnosticTrace = {
+    id: diagnosticId,
+    userId: user.id,
+    operation,
+    reviewDate,
+    model,
+    providerStatus: response.status,
+    requestId: providerRequestId || clientRequestId,
+    responseId: payload?.id ?? null,
+    durationMs: Date.now() - startedAt,
+  }
+  if (!response.ok || !payload) {
+    const errorCode = limitedText(payload?.error?.code, response.ok ? 'invalid_response' : `http_${response.status}`, 100)
+    const providerMessage = limitedText(payload?.error?.message, response.ok ? 'OpenAI returned unreadable JSON.' : `OpenAI returned HTTP ${response.status}.`)
+    await recordAiDiagnostic(env, trace, 'failed', providerMessage, errorCode)
+    console.error(JSON.stringify({ message: 'OpenAI coach request failed', operation, diagnosticId, status: response.status, errorCode, requestId: trace.requestId }))
+    throw new HttpError(response.ok ? 502 : response.status === 429 ? 429 : 502, openAiFailureMessage(response.status, errorCode), diagnosticId)
+  }
+  if (payload.status === 'failed' || payload.status === 'incomplete') {
+    const errorCode = payload.error?.code || payload.incomplete_details?.reason || payload.status
+    const providerMessage = payload.error?.message || (payload.status === 'incomplete'
+      ? `The response was incomplete: ${payload.incomplete_details?.reason || 'unknown reason'}.`
+      : 'OpenAI marked the response as failed.')
+    await recordAiDiagnostic(env, trace, 'failed', providerMessage, errorCode)
+    console.error(JSON.stringify({ message: 'OpenAI coach response did not complete', operation, diagnosticId, status: payload.status, errorCode, requestId: trace.requestId }))
+    const message = payload.incomplete_details?.reason === 'max_output_tokens'
+      ? 'The coach ran out of response space. Please retry; the diagnostic log has the details.'
+      : 'The coach response did not complete. Please try again.'
+    throw new HttpError(502, message, diagnosticId)
+  }
+  return { response: payload, trace }
 }
 
 function reviewText(review: Record<string, unknown>) {
@@ -883,7 +991,7 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
   const date = requireDate(body.date)
   const context = await buildDailyReviewContext(user, date, env)
   const model = env.OPENAI_COACH_MODEL || 'gpt-5.4-mini'
-  const response = await callOpenAI({
+  const { response, trace } = await callOpenAI({
     model,
     store: false,
     reasoning: { effort: 'low' },
@@ -891,20 +999,24 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
     instructions: `${coachInstructions} Produce a daily review using the supplied JSON context. The tomorrow field must identify the next scheduled day, including its date, or clearly say none is scheduled. For every exercise recommendation, copy the exact exerciseId from today's workout. Use proposed_change.action update_target only when recommending a specific next-session target that can be represented by the supplied target types; otherwise use no_change and set every other proposed_change field to null. Never propose a load outside the user's available equipment.`,
     input: JSON.stringify(context),
     text: { format: { type: 'json_schema', name: 'daily_fitness_review', strict: true, schema: dailyReviewSchema } },
-  }, env)
+  }, user, 'daily_review', date, env)
   const content = responseText(response)
-  if (!content) throw new HttpError(502, 'The coach returned an empty review.')
+  if (!content) {
+    await recordAiDiagnostic(env, trace, 'failed', 'OpenAI returned no review text.', 'empty_output')
+    throw new HttpError(502, 'The coach returned an empty review. The diagnostic log has the details.', trace.id)
+  }
   let structured: Record<string, unknown>
   try {
     structured = JSON.parse(content) as Record<string, unknown>
   } catch {
     console.error(JSON.stringify({
       message: 'OpenAI coach returned invalid JSON',
+      diagnosticId: trace.id,
       responseId: response.id ?? null,
       contentLength: content.length,
-      contentTail: content.slice(-250),
     }))
-    throw new HttpError(502, 'The coach returned an invalid review.')
+    await recordAiDiagnostic(env, trace, 'failed', 'The structured review could not be parsed as JSON.', 'invalid_json')
+    throw new HttpError(502, 'The coach returned an invalid review. The diagnostic log has the details.', trace.id)
   }
   const reviewId = `daily-review-${user.id}-${date}`
   await env.DB.prepare(`
@@ -917,6 +1029,7 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
       openai_response_id = excluded.openai_response_id,
       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `).bind(reviewId, user.id, date, model, String(structured.headline || 'Daily review'), reviewText(structured), JSON.stringify(structured), JSON.stringify(context), response.id ?? null).run()
+  await recordAiDiagnostic(env, trace, 'succeeded', 'Daily review completed.')
   const review = await enrichDailyReview({ id: reviewId, date, model, headline: String(structured.headline || 'Daily review'), review_text: reviewText(structured), structured_review: JSON.stringify(structured) }, user, env)
   return json({ review })
 }
@@ -1017,17 +1130,20 @@ async function sendCoachMessage(request: Request, user: AuthenticatedUser, env: 
     { role: 'user', content: body.message.trim() },
   ]
   const model = env.OPENAI_COACH_MODEL || 'gpt-5.4-mini'
-  const response = await callOpenAI({
+  const { response, trace } = await callOpenAI({
     model,
     store: false,
     reasoning: { effort: 'low' },
-    max_output_tokens: 1000,
+    max_output_tokens: 2000,
     instructions: `${coachInstructions} Answer the follow-up question directly using the saved daily review and context.`,
     input,
     text: { verbosity: 'low' },
-  }, env)
+  }, user, 'coach_message', date, env)
   const answer = responseText(response)
-  if (!answer) throw new HttpError(502, 'The coach returned an empty answer.')
+  if (!answer) {
+    await recordAiDiagnostic(env, trace, 'failed', 'OpenAI returned no follow-up answer text.', 'empty_output')
+    throw new HttpError(502, 'The coach returned an empty answer. The diagnostic log has the details.', trace.id)
+  }
   const now = new Date().toISOString()
   const userMessage = { id: crypto.randomUUID(), role: 'user', content: body.message.trim(), created_at: now }
   const coachMessage = { id: crypto.randomUUID(), role: 'assistant', content: answer, created_at: new Date(Date.now() + 1).toISOString() }
@@ -1037,7 +1153,20 @@ async function sendCoachMessage(request: Request, user: AuthenticatedUser, env: 
     env.DB.prepare(`INSERT INTO coach_messages (id, user_id, review_id, date, role, content, openai_response_id, created_at) VALUES (?, ?, ?, ?, 'assistant', ?, ?, ?)`)
       .bind(coachMessage.id, user.id, review.id, date, answer, response.id ?? null, coachMessage.created_at),
   ])
+  await recordAiDiagnostic(env, trace, 'succeeded', 'Coach follow-up completed.')
   return json({ messages: [userMessage, coachMessage] })
+}
+
+async function getAiDiagnostics(user: AuthenticatedUser, env: Env) {
+  const diagnostics = await env.DB.prepare(`
+    SELECT id, operation, review_date, status, model, provider_status, error_code,
+      message, request_id, response_id, duration_ms, created_at
+    FROM ai_diagnostics
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT 20
+  `).bind(user.id).all<Record<string, unknown>>()
+  return json({ diagnostics: diagnostics.results })
 }
 
 async function createMobilePairing(user: AuthenticatedUser, env: Env) {
@@ -1096,6 +1225,7 @@ async function handleApi(request: Request, env: Env) {
   if (request.method === 'POST' && url.pathname === '/api/functions/coach-message') return sendCoachMessage(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/coach-recommendation') return decideCoachRecommendation(request, user, env)
   if (request.method === 'GET' && url.pathname === '/api/coach/day') return getDailyCoach(requireDate(url.searchParams.get('date')), user, env)
+  if (request.method === 'GET' && url.pathname === '/api/ai-diagnostics') return getAiDiagnostics(user, env)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, database: 'D1', user: user.email })
   throw new HttpError(404, 'Not found.')
 }
@@ -1118,7 +1248,10 @@ export default {
         status,
         error: error instanceof Error ? error.message : String(error),
       }))
-      return withCors(json({ error: message }, { status }), request, env)
+      return withCors(json({
+        error: message,
+        ...(error instanceof HttpError && error.diagnosticId ? { diagnosticId: error.diagnosticId } : {}),
+      }, { status }), request, env)
     }
   },
 } satisfies ExportedHandler<Env>

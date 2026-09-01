@@ -22,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -37,6 +38,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var requestButton: Button
     private lateinit var syncButton: Button
     private var pendingWebSync = false
+    private var pendingWebSyncDate: LocalDate? = null
     private var handledSyncIntent = false
 
     private val permissionLauncher = registerForActivityResult(
@@ -217,6 +219,9 @@ class MainActivity : ComponentActivity() {
         if (handledSyncIntent || intent?.action != Intent.ACTION_VIEW || intent.data?.path != "/sync-health") return
         handledSyncIntent = true
         pendingWebSync = true
+        pendingWebSyncDate = intent.data?.getQueryParameter("date")?.let { rawDate ->
+            runCatching { LocalDate.parse(rawDate) }.getOrNull()
+        }
         syncFromWebsite()
     }
 
@@ -244,11 +249,13 @@ class MainActivity : ComponentActivity() {
                 HealthSyncPermissions.requested(client).all { it in granted }
             runCatching {
                 syncEngine.reportStatus("running", "web", backgroundPermission = backgroundReady)
-                syncEngine.sync(lookbackDays = 2, trigger = "web", backgroundPermission = backgroundReady)
+                pendingWebSyncDate?.let { date ->
+                    syncEngine.syncDate(date, trigger = "web", backgroundPermission = backgroundReady)
+                } ?: syncEngine.sync(lookbackDays = 2, trigger = "web", backgroundPermission = backgroundReady)
             }.onSuccess {
                 pendingWebSync = false
                 BackgroundSync.schedule(this@MainActivity)
-                returnToWebsite()
+                returnToWebsite(pendingWebSyncDate)
             }.onFailure {
                 syncEngine.reportStatus("failed", "web", it.message, backgroundReady)
                 syncStatus.text = friendlyError(it)
@@ -257,8 +264,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun returnToWebsite() {
-        val returnUrl = Uri.parse("https://fitness.aparishhouse.com/?healthSynced=${System.currentTimeMillis()}")
+    private fun returnToWebsite(date: LocalDate?) {
+        val returnUrl = Uri.parse("https://fitness.aparishhouse.com/").buildUpon()
+            .appendQueryParameter("healthSynced", System.currentTimeMillis().toString())
+            .apply { date?.let { appendQueryParameter("date", it.toString()) } }
+            .build()
         startActivity(Intent(Intent.ACTION_VIEW, returnUrl).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
         finish()
     }

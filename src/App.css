@@ -1207,6 +1207,46 @@
   text-align: left;
 }
 
+.aiDiagnosticList {
+  display: grid;
+  gap: 10px;
+}
+
+.aiDiagnosticItem {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid #72b88b;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.aiDiagnosticItem.failed {
+  border-left-color: #ef7777;
+}
+
+.aiDiagnosticItem p,
+.aiDiagnosticItem small {
+  margin: 0;
+}
+
+.aiDiagnosticHeading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.aiDiagnosticHeading span,
+.aiDiagnosticItem small {
+  color: var(--text-muted);
+}
+
+.diagnosticReference {
+  overflow-wrap: anywhere;
+}
+
 .coachReviewCard {
   display: flex;
   flex-direction: column;
