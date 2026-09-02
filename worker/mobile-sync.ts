@@ -167,6 +167,8 @@ async function sync(request: Request, env: SyncEnv) {
   const timezone = typeof body.timezone === 'string' && body.timezone.trim()
     ? body.timezone.trim().slice(0, 80)
     : 'America/Chicago'
+  const trigger = syncTrigger(body.trigger)
+  const explicitHealthRefresh = trigger === 'web'
   const now = new Date().toISOString()
   const statements: D1PreparedStatement[] = []
 
@@ -183,7 +185,14 @@ async function sync(request: Request, env: SyncEnv) {
       SELECT calories_kcal, protein_g, carbs_g, fat_g, steps, nutrition_source, steps_source, provenance
       FROM daily_health WHERE user_id = ? AND date = ?
     `).bind(device.user_id, date).first<Record<string, unknown>>()
-    const preserved = manualFields(typeof existing?.provenance === 'string' ? existing.provenance : null)
+    // Background syncs must not trample intentional web edits. An explicit
+    // "Sync health data" request, however, means the user wants Health Connect
+    // to refresh the displayed values even if an earlier save marked them as
+    // manual. Previously those rows were silently preserved while the sync was
+    // still reported as successful.
+    const preserved = explicitHealthRefresh
+      ? new Set<string>()
+      : manualFields(typeof existing?.provenance === 'string' ? existing.provenance : null)
     const incoming = {
       calories_kcal: nutrition ? asOptionalNumber(nutrition.caloriesKcal, 0, 20000) : null,
       protein_g: nutrition ? asOptionalNumber(nutrition.proteinG, 0, 2000) : null,
@@ -266,7 +275,7 @@ async function sync(request: Request, env: SyncEnv) {
     WHERE id = ?
   `).bind(
     now, now, now, appVersion(body.appVersion), backgroundPermission(body.backgroundPermission),
-    syncTrigger(body.trigger), now, device.id,
+    trigger, now, device.id,
   ))
   const results = await env.DB.batch(statements)
   if (!results.every((entry) => entry.success)) throw new HttpError(500, 'Health Connect data could not be saved.')
