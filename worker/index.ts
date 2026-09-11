@@ -105,8 +105,8 @@ const TABLES = {
   },
   runs: {
     ownerColumn: 'user_id',
-    columns: { id: 'text', user_id: 'text', plan_id: 'text', start_date: 'text', name: 'text', created_at: 'text', updated_at: 'text' },
-    writable: ['id', 'user_id', 'plan_id', 'start_date', 'name'],
+    columns: { id: 'text', user_id: 'text', plan_id: 'text', start_date: 'text', name: 'text', status: 'text', completed_at: 'text', created_at: 'text', updated_at: 'text' },
+    writable: ['id', 'user_id', 'plan_id', 'start_date', 'name', 'status', 'completed_at'],
   },
   schedule_days: {
     ownerColumn: 'user_id',

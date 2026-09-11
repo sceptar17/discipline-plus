@@ -829,6 +829,38 @@
   gap: 12px;
 }
 
+.planTargetMode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planTargetMode .mutedCopy {
+  margin: 0;
+}
+
+.completedRuns > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.completedRunList {
+  margin-top: 12px;
+}
+
+.completedRunCard,
+.completedRunActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.completedRunActions {
+  flex: 0 0 auto;
+}
+
 .schedulePreview {
   display: flex;
   flex-direction: column;
@@ -2364,5 +2396,14 @@ textarea:focus-visible {
 
   .planListActions {
     justify-content: flex-end;
+  }
+
+  .completedRunCard {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .completedRunActions {
+    width: 100%;
   }
 }

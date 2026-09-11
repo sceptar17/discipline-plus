@@ -46,6 +46,7 @@ type DynamicRow = {
   type: string
   ref: string
   start_date: string
+  completed_at: string | null
   date: string
   skipped: boolean
   run_id: string | null

@@ -19,15 +19,18 @@ type Item = { id: string; exerciseId: string; type: TT; target: Target; ref: RM;
 type Day = { date: string; notes: string; rest: boolean; skipped: boolean; runId?: string; dayNo?: number; items: Item[] }
 type PlanDay = { id: string; label: string; rest: boolean; notes?: string; items: Array<{ id: string; exerciseId: string; type: TT; target: Target; ref: RM }> }
 type Plan = { id: string; name: string; focus: string; days: PlanDay[] }
-type Run = { id: string; planId: string; startDate: string; name: string }
+type RunStatus = 'active' | 'completed'
+type Run = { id: string; planId: string; startDate: string; name: string; status: RunStatus; completedAt?: string }
 type Log = { id: string; sourceItemId?: string; exerciseId: string; date: string; type: TT; target: Target; result: Result; done: true }
 type LegacyHist = { id: string; exerciseId: string; date: string; type: TT; target: Target; actualSeconds?: number; actualWeight?: number; actualCount?: number; done: boolean }
 type LegacyItem = Omit<Item, 'result'> & { result?: Result; actualSeconds?: number; actualTimeText?: string; actualWeight?: number; actualCount?: number; note?: string }
-type LegacyState = { exercises?: Exercise[]; schedule?: Array<Omit<Day, 'items'> & { items: LegacyItem[] }>; plans?: Plan[]; runs?: Run[]; history?: LegacyHist[]; logs?: Log[] }
+type LegacyRun = Omit<Run, 'status' | 'completedAt'> & { status?: RunStatus; completedAt?: string }
+type LegacyState = { exercises?: Exercise[]; schedule?: Array<Omit<Day, 'items'> & { items: LegacyItem[] }>; plans?: Plan[]; runs?: LegacyRun[]; history?: LegacyHist[]; logs?: Log[] }
 type State = { exercises: Exercise[]; schedule: Day[]; plans: Plan[]; runs: Run[]; logs: Log[] }
 type ExerciseForm = { kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM }
 type PlanForm = { name: string; focus: string }
 type PlanScheduleMode = 'cycles' | 'end-date'
+type PlanTargetMode = 'latest' | 'template'
 type PlanCyclePreview = { cycleNumber: number; startDate: string; endDate: string; days: Array<{ date: string; dayNo: number; planDay: PlanDay }> }
 type PlanSchedulePreview = { cycles: PlanCyclePreview[]; dates: string[]; conflicts: string[]; startDate: string; endDate: string; totalDays: number; error: string }
 type Toast = { id: string; message: string }
@@ -358,7 +361,7 @@ function seed(): State {
       { id: id('pd'), label: 'Day 2', rest: false, items: [{ id: id('pi'), exerciseId: ex[3].id, type: 'distance', target: { distance: 3, unit: 'mi' }, ref: 'last-result' }, { id: id('pi'), exerciseId: ex[1].id, type: 'duration', target: { seconds: 90 }, ref: 'personal-best' }] },
       { id: id('pd'), label: 'Day 3', rest: true, items: [] },
     ] }],
-    runs: [{ id: runId, planId, startDate: today, name: 'Strength Base active run' }],
+    runs: [{ id: runId, planId, startDate: today, name: 'Strength Base active run', status: 'active' }],
     logs: [
       { id: id('log'), exerciseId: ex[2].id, date: add(today, -3), type: 'weighted', target: { sets: 4, reps: 8, weight: 30 }, result: { weight: 30 }, done: true },
       { id: id('log'), exerciseId: ex[1].id, date: add(today, -5), type: 'duration', target: { seconds: 75 }, result: { seconds: 75, timeText: fmtSecs(75) }, done: true },
@@ -446,7 +449,13 @@ function ensureAmpedData(state: LegacyState): State {
   const cleanedState: State = {
     exercises: state.exercises ?? [],
     plans: (state.plans ?? []).filter((plan) => plan.name !== '30-Day Strength Base'),
-    runs: (state.runs ?? []).filter((run) => !legacyRunIds.has(run.id)),
+    runs: (state.runs ?? [])
+      .filter((run) => !legacyRunIds.has(run.id))
+      .map((run) => ({
+        ...run,
+        status: run.status === 'completed' ? 'completed' : 'active',
+        completedAt: typeof run.completedAt === 'string' ? run.completedAt : undefined,
+      })),
     schedule: normalizedSchedule.filter((day) => !day.runId || !legacyRunIds.has(day.runId)),
     logs: [...cleanedLegacyLogs, ...migratedHistoryLogs],
   }
@@ -551,6 +560,46 @@ function referenceTarget(history: Log[], exercise: Exercise, mode: RM, type: TT,
     next.count = source.result.count
   }
 
+  return next
+}
+
+function continuedTargetFromLatest(history: Log[], exercise: Exercise, type: TT, fallback: Target, beforeDate: string) {
+  const source = history
+    .filter((entry) => entry.exerciseId === exercise.id && entry.done && entry.date < beforeDate)
+    .sort((a, b) => b.date.localeCompare(a.date))[0]
+  if (!source) return clone(fallback)
+
+  const next = clone(fallback)
+  if (type === 'sets' || type === 'weighted') {
+    const completedSets = source.result.sets?.filter((set) => Number.isInteger(set.reps) && set.reps > 0) ?? []
+    if (completedSets.length) {
+      next.sets = completedSets.length
+      next.reps = Math.min(...completedSets.map((set) => set.reps))
+    } else {
+      if (source.target.sets !== undefined) next.sets = source.target.sets
+      if (source.target.reps !== undefined) next.reps = source.target.reps
+    }
+    const latestWeight = source.result.weight
+      ?? source.result.sets?.map((set) => set.weight).find((weight): weight is number => weight !== undefined)
+      ?? source.target.weight
+    if (latestWeight !== undefined) next.weight = latestWeight
+    return next
+  }
+  if (type === 'count') {
+    next.count = source.result.count ?? source.target.count ?? next.count
+    next.countUnit = source.target.countUnit ?? next.countUnit
+    return next
+  }
+  if (type === 'duration') {
+    next.seconds = source.result.seconds ?? source.target.seconds ?? next.seconds
+    return next
+  }
+  if (type === 'distance') {
+    next.distance = source.target.distance ?? next.distance
+    next.unit = source.target.unit ?? next.unit
+    return next
+  }
+  next.count = source.result.count ?? source.target.count ?? next.count
   return next
 }
 
@@ -904,12 +953,14 @@ function mapPlanRows(
   }))
 }
 
-function mapRunRows(rows: Array<{ id: string; plan_id: string | null; start_date: string; name: string }>): Run[] {
+function mapRunRows(rows: Array<{ id: string; plan_id: string | null; start_date: string; name: string; status: string; completed_at: string | null }>): Run[] {
   return rows.map((row) => ({
     id: row.id,
     planId: row.plan_id ?? '',
     startDate: row.start_date,
     name: row.name,
+    status: row.status === 'completed' ? 'completed' : 'active',
+    completedAt: row.completed_at ?? undefined,
   }))
 }
 
@@ -1031,6 +1082,7 @@ export default function App() {
   const [applyPlanId, setApplyPlanId] = useState<string | null>(null)
   const [applyStartDate, setApplyStartDate] = useState(today)
   const [applyScheduleMode, setApplyScheduleMode] = useState<PlanScheduleMode>('cycles')
+  const [applyTargetMode, setApplyTargetMode] = useState<PlanTargetMode>('latest')
   const [applyCycleCount, setApplyCycleCount] = useState(1)
   const [applyEndDate, setApplyEndDate] = useState(add(today, 59))
   const [applyPlanSaving, setApplyPlanSaving] = useState(false)
@@ -1050,6 +1102,7 @@ export default function App() {
   const scheduleTouchHoldRef = useRef<number | null>(null)
   const scheduleTouchDragRef = useRef<ScheduleTouchDrag | null>(null)
   const scheduleCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const setRepsInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const suppressScheduleDayClickRef = useRef(false)
   useEffect(() => {
     if (hasSupabaseEnv) return
@@ -1277,7 +1330,9 @@ export default function App() {
   const monthDays = useMemo(() => monthGrid(month), [month])
   const sortedDays = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
   const nextWorkoutDay = sortedDays.find((day0) => day0.date > selected && !day0.rest && day0.items.length > 0)
-  const activePlanIds = new Set(state.runs.map((run) => run.planId).filter((planId): planId is string => !!planId))
+  const activeRuns = state.runs.filter((run) => run.status === 'active')
+  const completedRuns = state.runs.filter((run) => run.status === 'completed').sort((a, b) => (b.completedAt ?? b.startDate).localeCompare(a.completedAt ?? a.startDate))
+  const activePlanIds = new Set(activeRuns.map((run) => run.planId).filter((planId): planId is string => !!planId))
   const planToApply = state.plans.find((entry) => entry.id === applyPlanId)
   const firstNewCycleNumber = applyPlanId ? state.runs.filter((run) => run.planId === applyPlanId).length + 1 : 1
   const applyPlanPreview = buildPlanSchedulePreview(planToApply, applyStartDate, applyScheduleMode, applyCycleCount, applyEndDate, state.schedule, firstNewCycleNumber)
@@ -1514,6 +1569,8 @@ export default function App() {
       plan_id: run.planId && validPlanIds.has(run.planId) ? run.planId : null,
       start_date: run.startDate,
       name: run.name,
+      status: run.status,
+      completed_at: run.completedAt ?? null,
     }))
     const dayRows = nextSchedule.map((day0) => ({
       id: scheduleDayId(day0.date),
@@ -1801,7 +1858,7 @@ export default function App() {
     const syncSchedule = async () => {
       const syncRevision = scheduleRevisionRef.current
       const [{ data: runRows, error: runError }, { data: dayRows, error: dayError }, { data: itemRows, error: itemError }, { data: logRows, error: logError }] = await Promise.all([
-        client.from('runs').select('id, plan_id, start_date, name').eq('user_id', user.id).order('start_date', { ascending: true }),
+        client.from('runs').select('id, plan_id, start_date, name, status, completed_at').eq('user_id', user.id).order('start_date', { ascending: true }),
         client.from('schedule_days').select('id, date, notes, skipped, run_id, day_no').eq('user_id', user.id).order('date', { ascending: true }),
         client.from('schedule_items').select('id, schedule_day_id, exercise_id, type, target, ref, done, result').eq('user_id', user.id),
         client.from('logs').select('id, source_item_id, exercise_id, date, type, target, result').eq('user_id', user.id).order('date', { ascending: true }),
@@ -2516,6 +2573,7 @@ export default function App() {
     setApplyPlanId(planIdToApply)
     setApplyStartDate(startDate)
     setApplyScheduleMode('cycles')
+    setApplyTargetMode('latest')
     setApplyCycleCount(1)
     setApplyEndDate(add(startDate, 59))
   }
@@ -2535,7 +2593,7 @@ export default function App() {
     const nextRuns: Run[] = []
     applyPlanPreview.cycles.forEach((cycle) => {
       const runId = id('run')
-      nextRuns.push({ id: runId, planId: planToApply.id, startDate: cycle.startDate, name: `${planToApply.name} · Cycle ${cycle.cycleNumber} starting ${fmtShort(cycle.startDate)}` })
+      nextRuns.push({ id: runId, planId: planToApply.id, startDate: cycle.startDate, name: `${planToApply.name} · Cycle ${cycle.cycleNumber} starting ${fmtShort(cycle.startDate)}`, status: 'active' })
       cycle.days.forEach(({ date, dayNo, planDay }) => made.push({
         date,
         notes: planDay.notes || `${planToApply.name} - ${planDay.label}`,
@@ -2543,14 +2601,20 @@ export default function App() {
         skipped: false,
         runId,
         dayNo,
-        items: planDay.items.map((item) => ({ id: id('it'), exerciseId: item.exerciseId, type: item.type, target: clone(item.target), ref: item.ref, done: false, result: {} })),
+        items: planDay.items.map((item) => {
+          const exercise = exById[item.exerciseId]
+          const target = applyTargetMode === 'latest' && exercise
+            ? continuedTargetFromLatest(derivedHistory, exercise, item.type, item.target, applyPlanPreview.startDate)
+            : clone(item.target)
+          return { id: id('it'), exerciseId: item.exerciseId, type: item.type, target, ref: item.ref, done: false, result: {} }
+        }),
       }))
     })
     const saved = await commitScheduleState([...state.schedule, ...made], [...state.runs, ...nextRuns], state.logs, { persistMode: 'immediate' })
     setApplyPlanSaving(false)
     if (!saved) return
     setApplyPlanId(null)
-    pushToast(`${applyPlanPreview.cycles.length} cycle${applyPlanPreview.cycles.length === 1 ? '' : 's'} scheduled through ${fmtShort(applyPlanPreview.endDate)}.`)
+    pushToast(`${applyPlanPreview.cycles.length} cycle${applyPlanPreview.cycles.length === 1 ? '' : 's'} scheduled through ${fmtShort(applyPlanPreview.endDate)}${applyTargetMode === 'latest' ? ' using your latest results' : ' using plan defaults'}.`)
   }
 
   const shiftPlan = async () => {
@@ -2681,6 +2745,13 @@ export default function App() {
     const nextLogs = state.logs.filter((entry) => !entry.sourceItemId || !removedItemIds.has(entry.sourceItemId))
     await commitScheduleState(nextSchedule, nextRuns, nextLogs)
   }
+  const setRunStatus = async (runId: string, status: RunStatus) => {
+    const nextRuns = state.runs.map((run) => run.id === runId
+      ? { ...run, status, completedAt: status === 'completed' ? new Date().toISOString() : undefined }
+      : run)
+    const saved = await commitScheduleState(state.schedule, nextRuns, state.logs, { persistMode: 'immediate' })
+    if (saved) pushToast(status === 'completed' ? 'Run moved to completed history. All scheduled days and logs were kept.' : 'Run reopened.')
+  }
   const resetAllData = async () => {
     await replaceWorkspaceState(ensureAmpedData(seed()))
     pushToast('App data reset.')
@@ -2688,7 +2759,7 @@ export default function App() {
   const resetScheduleData = async () => {
     await commitScheduleState([], [], state.logs.filter((entry) => !entry.sourceItemId), { selectedDate: today })
     cancelLogEdit()
-    pushToast('Schedule and active runs cleared.')
+    pushToast('Schedule and runs cleared.')
   }
   const resetProgressData = async () => {
     await commitScheduleState(
@@ -2935,11 +3006,20 @@ export default function App() {
                       return { ...current, [item.id]: { ...activeDraft, timeText: parsed !== undefined ? fmtSecs(parsed) : activeDraft.timeText } }
                     })} /></label>}
                     {progressMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="text" inputMode="decimal" placeholder="0" value={draft.weightText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), weightText: e.target.value } }))} /></label>}
-                    {supportsSetResults && <label className="field setRepsField"><span>Reps by set</span><div className="setRepsInputWrap"><input type="text" inputMode="numeric" placeholder="8 / 8 / 7 / 7" value={draft.setRepsText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), setRepsText: e.target.value } }))} /><button type="button" className="setSeparatorButton" aria-label="Add separator between sets" onClick={() => setItemDrafts((current) => {
+                    {supportsSetResults && <label className="field setRepsField"><span>Reps by set</span><div className="setRepsInputWrap"><input ref={(node) => { setRepsInputRefs.current[item.id] = node }} type="text" inputMode="numeric" placeholder="8 / 8 / 7 / 7" value={draft.setRepsText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), setRepsText: e.target.value } }))} /><button type="button" className="setSeparatorButton" aria-label="Add separator between sets" onPointerDown={(event) => event.preventDefault()} onClick={() => {
+                      let nextText = ''
+                      setItemDrafts((current) => {
                       const activeDraft = current[item.id] ?? makeItemDraft(item, ex)
                       const trimmed = activeDraft.setRepsText.trimEnd().replace(/\/+$/, '').trimEnd()
-                      return { ...current, [item.id]: { ...activeDraft, setRepsText: trimmed ? `${trimmed} / ` : '' } }
-                    })}>/</button></div></label>}
+                      nextText = trimmed ? `${trimmed} / ` : ''
+                      return { ...current, [item.id]: { ...activeDraft, setRepsText: nextText } }
+                      })
+                      window.requestAnimationFrame(() => {
+                        const input = setRepsInputRefs.current[item.id]
+                        input?.focus()
+                        input?.setSelectionRange(nextText.length, nextText.length)
+                      })
+                    }}>/</button></div></label>}
                     {progressMetric === 'count' && !supportsSetResults && draft.type !== 'duration' && draft.type !== 'for-time' && <label className="field compactMetricField"><span>Actual {countUnitLabel(draft.target)}</span><input type="text" inputMode="numeric" placeholder={`${totalCount(draft.target)}`} value={draft.countText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), countText: e.target.value } }))} /></label>}
                     <div className="targetActions">{metricActions}</div>
                   </div>
@@ -3310,6 +3390,14 @@ export default function App() {
               <label className="field"><span>Start date</span><input type="date" value={applyStartDate} onChange={(e) => setApplyStartDate(e.target.value)} /></label>
               {applyScheduleMode === 'cycles' ? <label className="field"><span>Cycles</span><input type="number" inputMode="numeric" min={1} max={12} value={applyCycleCount} onChange={(e) => setApplyCycleCount(Math.max(1, Math.min(12, Number(e.target.value) || 1)))} /></label> : <label className="field"><span>Program end date</span><input type="date" value={applyEndDate} onChange={(e) => setApplyEndDate(e.target.value)} /></label>}
             </div>
+            <div className="planTargetMode">
+              <span className="fieldLabel">Starting targets</span>
+              <div className="scheduleModePicker" role="group" aria-label="Starting targets">
+                <button className={applyTargetMode === 'latest' ? 'pill active' : 'pill'} onClick={() => setApplyTargetMode('latest')}>Continue from latest</button>
+                <button className={applyTargetMode === 'template' ? 'pill active' : 'pill'} onClick={() => setApplyTargetMode('template')}>Use plan defaults</button>
+              </div>
+              <p className="mutedCopy">{applyTargetMode === 'latest' ? 'Each exercise starts from your most recent completed result before this run. Exercises without history use the plan default.' : 'Every exercise starts from the reusable plan template.'}</p>
+            </div>
             {applyPlanPreview.error ? <p className="status warn">{applyPlanPreview.error}</p> : <div className="schedulePreview">
               <div className="schedulePreviewSummary"><div><span>Date range</span><strong>{fmtDateRange(applyPlanPreview.startDate, applyPlanPreview.endDate)}</strong></div><div><span>Calendar days</span><strong>{applyPlanPreview.totalDays}</strong></div><div><span>Cycles</span><strong>{applyPlanPreview.cycles.length}</strong></div></div>
               <div className="cyclePreviewList">{applyPlanPreview.cycles.map((cycle) => <div key={`${cycle.cycleNumber}-${cycle.startDate}`}><span>Cycle {cycle.cycleNumber}</span><strong>{fmtDateRange(cycle.startDate, cycle.endDate)}{cycle.days.length < (planToApply?.days.length ?? 0) ? ` · ${cycle.days.length}-day partial cycle` : ''}</strong></div>)}</div>
@@ -3322,16 +3410,18 @@ export default function App() {
           </div>}
           <div className="stack">
             <div><p className="eyebrow">Active runs</p></div>
-            {state.runs.map((r) => {
+            {activeRuns.length === 0 && <div className="empty compactEmpty">No active runs.</div>}
+            {activeRuns.map((r) => {
               const linkedPlan = r.planId ? state.plans.find((plan0) => plan0.id === r.planId) : null
               const runDays = state.schedule.filter((x) => x.runId === r.id)
-              const completedDays = runDays.filter((day) => day.items.length > 0 && day.items.every((item) => item.done)).length
-              const totalDays = runDays.length || linkedPlan?.days.length || 0
+              const workoutDays = runDays.filter((day) => day.items.length > 0)
+              const completedDays = workoutDays.filter((day) => day.skipped || day.items.every((item) => item.done)).length
+              const totalDays = workoutDays.length || linkedPlan?.days.filter((day) => day.items.length > 0).length || 0
               const progress = totalDays ? Math.round((completedDays / totalDays) * 100) : 0
               return <article key={r.id} className="card stack">
                 <div className="row">
-                  <div><h3>{runDisplayName(r, state.plans, today)}</h3><p>{completedDays} of {totalDays} days complete</p></div>
-                  <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove active run</button></details>
+                  <div><h3>{runDisplayName(r, state.plans, today)}</h3><p>{completedDays} of {totalDays} workouts complete</p></div>
+                  <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton" onClick={() => void setRunStatus(r.id, 'completed')}>Mark completed</button><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove active run</button></details>
                 </div>
                 <div className="progressTrack" aria-label={`${progress}% complete`}>
                   <div className="progressFill" style={{ width: `${progress}%` }} />
@@ -3339,6 +3429,26 @@ export default function App() {
               </article>
             })}
           </div>
+          {completedRuns.length > 0 && <details className="secondaryTools completedRuns">
+            <summary>Completed runs ({completedRuns.length})</summary>
+            <div className="stack completedRunList">
+              {completedRuns.map((r) => {
+                const runDays = state.schedule.filter((x) => x.runId === r.id)
+                const workoutDays = runDays.filter((day) => day.items.length > 0)
+                const completedDays = workoutDays.filter((day) => day.skipped || day.items.every((item) => item.done)).length
+                return <article key={r.id} className="card completedRunCard">
+                  <div>
+                    <h3>{runDisplayName(r, state.plans, today)}</h3>
+                    <p>{completedDays} of {workoutDays.length} workouts complete{r.completedAt ? ` · Closed ${fmtShort(r.completedAt.slice(0, 10))}` : ''}</p>
+                  </div>
+                  <div className="completedRunActions">
+                    <button className="pill" onClick={() => void setRunStatus(r.id, 'active')}>Reopen</button>
+                    <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove completed run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove run</button></details>
+                  </div>
+                </article>
+              })}
+            </div>
+          </details>}
         </section>
         {plan && <section ref={planDetailRef} className="panel stack planEditorPanel">
           {!planEditing ? <>
@@ -3555,11 +3665,11 @@ export default function App() {
             </div>
             <div className="card stack">
               <div><strong>Reset schedule and active runs</strong><p>This removes calendar days and active runs but keeps your exercise library, templates, and saved progress logs not tied to the schedule.</p></div>
-              <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-schedule-data', title: 'Reset schedule and active runs?', body: 'This will clear the calendar and remove active runs.' })}>Reset schedule</button>
+              <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-schedule-data', title: 'Reset schedule and runs?', body: 'This will clear the calendar and remove active and completed runs.' })}>Reset schedule</button>
             </div>
             <div className="card stack">
               <div><strong>Reset the app</strong><p>This resets the app back to a clean starting state.</p></div>
-              <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-all-data', title: 'Reset all app data?', body: 'This will remove exercises, plans, schedule data, active runs, and progress history.' })}>Reset everything</button>
+              <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-all-data', title: 'Reset all app data?', body: 'This will remove exercises, plans, schedule data, runs, and progress history.' })}>Reset everything</button>
             </div>
           </>}
           {settingsSection === 'integrations' && <div className="stack">
