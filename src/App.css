@@ -1789,8 +1789,8 @@
 .loggerPanel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 12px;
+  padding: 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(0, 0, 0, 0.14);
 }
@@ -2213,8 +2213,16 @@ textarea:focus-visible {
   }
 
   .workoutItemRow {
-    min-height: 64px;
-    padding-left: 14px;
+    min-height: 60px;
+    padding: 8px 10px 8px 12px;
+  }
+
+  .workoutList {
+    gap: 6px;
+  }
+
+  .workoutItemHeading {
+    margin-bottom: 3px;
   }
 
   .workoutItemMeta {
@@ -2226,7 +2234,28 @@ textarea:focus-visible {
   }
 
   .loggerPanel {
-    padding: 14px;
+    gap: 9px;
+    padding: 11px 12px 12px;
+  }
+
+  .loggerHeading {
+    gap: 10px;
+  }
+
+  .loggerHeading p {
+    margin-top: 2px;
+    font-size: 0.84rem;
+  }
+
+  .loggerPanel .field {
+    gap: 5px;
+  }
+
+  .loggerPanel .field input,
+  .loggerPanel .field select {
+    min-height: 44px;
+    padding: 0.66rem 0.75rem;
+    border-radius: 14px;
   }
 
   .targetEditRow,
@@ -2235,11 +2264,39 @@ textarea:focus-visible {
     flex-direction: column;
   }
 
+  .resultRow {
+    gap: 7px;
+  }
+
   .targetEditRow > *,
   .resultRow > * {
+    flex: 0 0 auto;
     width: 100%;
     max-width: none;
     min-width: 0;
+  }
+
+  .resultRow:has(.setRepsField):has(.compactMetricField) {
+    display: grid;
+    grid-template-columns: minmax(84px, 0.38fr) minmax(0, 1fr);
+    align-items: end;
+  }
+
+  .resultRow:has(.setRepsField):has(.compactMetricField) .targetActions {
+    grid-column: 1 / -1;
+  }
+
+  .loggerPanel .setRepsInputWrap {
+    grid-template-columns: minmax(0, 1fr) 44px;
+    gap: 6px;
+  }
+
+  .loggerPanel .compactDifficultyField {
+    max-width: none;
+  }
+
+  .loggerPanel .secondaryTools[open] > summary {
+    margin-bottom: 8px;
   }
 
   .restState {
