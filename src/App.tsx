@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import type { AiDiagnostic, User } from './lib/cloudflare'
 import * as XLSX from 'xlsx'
 import './App.css'
-import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, supabase, supabaseUrl } from './lib/cloudflare'
+import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, supabase, supabaseUrl } from './lib/cloudflare'
 
 type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
@@ -75,6 +75,7 @@ type DailyReview = {
   exercise_recommendations: ExerciseRecommendation[]
 }
 type CoachMessage = { id: string; role: 'user' | 'assistant'; content: string; created_at: string }
+type ProgramCoachMessage = CoachMessage & { lookback_days?: number }
 type WorkbookPreview = { fileName: string; sheets: Array<{ name: string; rows: string[][] }> }
 type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: string; defaultType: TT; progressMetric: PM; usedOnDays: string[] }
 type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
@@ -1028,7 +1029,7 @@ export default function App() {
     return ensureAmpedData(raw ? JSON.parse(raw) as LegacyState : seed())
   })
   const today = key(new Date())
-  const [tab, setTab] = useState<'schedule' | 'exercises' | 'plans' | 'progress' | 'settings'>('schedule')
+  const [tab, setTab] = useState<'schedule' | 'coach' | 'exercises' | 'plans' | 'progress' | 'settings'>('schedule')
   const [user, setUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(hasSupabaseEnv)
   const [selected, setSelected] = useState(today)
@@ -1073,6 +1074,11 @@ export default function App() {
   const [dailyReviewSubmitting, setDailyReviewSubmitting] = useState(false)
   const [coachDraft, setCoachDraft] = useState('')
   const [coachSending, setCoachSending] = useState(false)
+  const [programCoachMessages, setProgramCoachMessages] = useState<ProgramCoachMessage[]>([])
+  const [programCoachDraft, setProgramCoachDraft] = useState('')
+  const [programCoachLookback, setProgramCoachLookback] = useState<28 | 56 | 84>(28)
+  const [programCoachLoading, setProgramCoachLoading] = useState(false)
+  const [programCoachSending, setProgramCoachSending] = useState(false)
   const [recommendationDecisionSaving, setRecommendationDecisionSaving] = useState<Record<number, 'apply' | 'dismiss'>>({})
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, boolean>>({})
   const [expandedPlanItems, setExpandedPlanItems] = useState<Record<string, boolean>>({})
@@ -1285,6 +1291,30 @@ export default function App() {
     })
     return () => { active = false }
   }, [selected, user])
+  useEffect(() => {
+    if (!user) {
+      setProgramCoachMessages([])
+      return
+    }
+    if (tab !== 'coach') return
+    let active = true
+    setProgramCoachLoading(true)
+    loadProgramCoach().then((payload) => {
+      if (!active) return
+      const messages = Array.isArray(payload?.messages)
+        ? payload.messages.filter((message): message is ProgramCoachMessage => Boolean(message) && typeof message === 'object' && ((message as ProgramCoachMessage).role === 'user' || (message as ProgramCoachMessage).role === 'assistant'))
+        : []
+      setProgramCoachMessages(messages)
+      const lookback = Number(payload?.lookbackDays)
+      if (lookback === 28 || lookback === 56 || lookback === 84) setProgramCoachLookback(lookback)
+    }).catch((error) => {
+      console.error('program coach load failed', error)
+      if (active) setProgramCoachMessages([])
+    }).finally(() => {
+      if (active) setProgramCoachLoading(false)
+    })
+    return () => { active = false }
+  }, [tab, user])
   const exById = useMemo(() => Object.fromEntries(state.exercises.map((x) => [x.id, x])), [state.exercises])
   const sortedExercises = useMemo(() => [...state.exercises].sort(compareExercises), [state.exercises])
   const filteredLibraryExercises = useMemo(() => {
@@ -2087,6 +2117,26 @@ export default function App() {
     }
     setCoachDraft('')
     setCoachMessages((current) => [...current, ...messages])
+  }
+
+  const sendProgramCoachMessage = async () => {
+    if (!supabase || !user || programCoachSending || !programCoachDraft.trim()) return
+    const message = programCoachDraft.trim()
+    setProgramCoachSending(true)
+    const { data, error } = await supabase.functions.invoke('program-coach-message', {
+      body: { asOfDate: today, message, lookbackDays: programCoachLookback },
+    })
+    setProgramCoachSending(false)
+    const messages = data && typeof data === 'object' && 'messages' in data && Array.isArray(data.messages)
+      ? data.messages.filter((entry: unknown): entry is ProgramCoachMessage => Boolean(entry) && typeof entry === 'object')
+      : []
+    if (error || messages.length !== 2) {
+      console.error('program coach message failed', error)
+      pushToast(`${error?.message || 'The program coach could not answer right now.'}${error?.diagnosticId ? ` Reference ${error.diagnosticId.slice(0, 8)}.` : ''}`)
+      return
+    }
+    setProgramCoachDraft('')
+    setProgramCoachMessages((current) => [...current, ...messages])
   }
 
   const createMobilePairing = async () => {
@@ -2945,7 +2995,7 @@ export default function App() {
         </div>
 
         <nav className="topNav" aria-label="Primary navigation">
-          {(['schedule', 'progress', 'plans', 'exercises'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{{ schedule: 'Today', exercises: 'Library', plans: 'Plan', progress: 'Progress' }[x]}</button>)}
+          {(['schedule', 'coach', 'plans', 'exercises'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{{ schedule: 'Today', coach: 'Coach', exercises: 'Library', plans: 'Plan' }[x]}</button>)}
         </nav>
       </header>
 
@@ -3251,6 +3301,38 @@ export default function App() {
       {toasts.length > 0 && <div className="toastStack">
         {toasts.map((toast) => <div key={toast.id} className="toast">{toast.message}</div>)}
       </div>}
+
+      {tab === 'coach' && <main className="coachPage">
+        <section className="panel programCoachPanel">
+          <div className="programCoachHeader">
+            <div><p className="eyebrow">AI program coach</p><h2>Ask about the bigger picture</h2><p>Review exercise selection, progression, weekly structure, recovery, or whether the program should change.</p></div>
+            <span className="sourceBadge">Fresh app data each question</span>
+          </div>
+          <div className="programCoachWindow">
+            <div><strong>Review window</strong><p>Choose how much recent history the coach should weigh most heavily.</p></div>
+            <div className="scheduleModePicker" role="group" aria-label="Program coach review window">
+              {([28, 56, 84] as const).map((days) => <button key={days} className={programCoachLookback === days ? 'pill active' : 'pill'} onClick={() => setProgramCoachLookback(days)}>{days / 7} weeks</button>)}
+            </div>
+          </div>
+          <div className="programCoachContextLine">
+            <strong>Included automatically</strong>
+            <span>Plans and runs · every completed exercise result · workout notes · nutrition and steps · weight trend · goals · equipment · safety notes · recent daily reviews</span>
+          </div>
+          {programCoachLoading ? <div className="coachReviewEmpty"><p>Loading your program conversation...</p></div> : <div className="programCoachConversation">
+            {programCoachMessages.length === 0 ? <div className="programCoachEmpty">
+              <div><strong>A few useful starting points</strong><p>The coach will use the selected review window and your current structured records.</p></div>
+              <div className="programCoachStarters">
+                {["Review my overall program now that I’m finishing my first four weeks.", 'Are these still the right exercises for my goal and equipment?', 'Should I change my number of lifting or cardio days?'].map((prompt) => <button key={prompt} className="starterPrompt" onClick={() => setProgramCoachDraft(prompt)}>{prompt}</button>)}
+              </div>
+            </div> : <div className="coachMessages programCoachMessages">{programCoachMessages.map((message) => <div key={message.id} className={`coachMessage ${message.role}`}><span>{message.role === 'assistant' ? 'Program coach' : 'You'}{message.lookback_days ? ` · ${message.lookback_days / 7} weeks` : ''}</span><p>{message.content}</p></div>)}</div>}
+            <div className="programCoachComposer">
+              <textarea rows={3} value={programCoachDraft} onChange={(event) => setProgramCoachDraft(event.target.value)} placeholder="Ask about your overall program..." maxLength={4000} />
+              <button className="primary" onClick={() => void sendProgramCoachMessage()} disabled={programCoachSending || !programCoachDraft.trim()}>{programCoachSending ? 'Reviewing your history...' : 'Ask program coach'}</button>
+            </div>
+            <small className="programCoachAdvisory">Recommendations are advisory. The coach will not change your plan unless you explicitly choose to make a change.</small>
+          </div>}
+        </section>
+      </main>}
 
       {tab === 'exercises' && <main className="grid">
         <section className="panel stack">

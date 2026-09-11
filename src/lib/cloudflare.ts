@@ -115,6 +115,11 @@ export async function loadCoachDay(date: string) {
   return parseResponse(response) as Promise<{ review?: unknown; messages?: unknown[] } | null>
 }
 
+export async function loadProgramCoach() {
+  const response = await fetch(apiUrl('/api/program-coach'), { credentials: 'include' })
+  return parseResponse(response) as Promise<{ messages?: unknown[]; lookbackDays?: unknown } | null>
+}
+
 export async function loadHealthSyncStatus() {
   const response = await fetch(apiUrl('/api/health-sync/status'), { credentials: 'include' })
   return parseResponse(response) as Promise<{ device?: unknown } | null>
