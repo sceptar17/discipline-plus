@@ -890,7 +890,19 @@ async function buildProgramCoachContext(user: AuthenticatedUser, asOfDate: strin
     runs: rows(6),
     planTemplates: Array.from(planMap.values()).map((plan) => ({ ...plan, days: Array.from(plan.days.values()) })),
     persistentNotes: rows(5),
-    recentDailyReviews: rows(8).map((row) => ({ date: row.date, headline: row.headline, review: parseStoredJson(row.structured_review) })),
+    recentDailyReviews: rows(8).map((row) => {
+      const review = parseStoredJson(row.structured_review)
+      return {
+        date: row.date,
+        headline: row.headline,
+        actionItems: isRecord(review) && Array.isArray(review.action_items) ? review.action_items.slice(0, 3) : [],
+        exerciseRecommendations: isRecord(review) && Array.isArray(review.exercise_recommendations)
+          ? review.exercise_recommendations.slice(0, 4).map((item) => isRecord(item)
+            ? { exercise: item.exercise, recommendation: item.recommendation }
+            : item)
+          : [],
+      }
+    }),
     next14Days: Array.from(upcomingDays.values()),
   }
 }
@@ -906,9 +918,10 @@ const dailyReviewSchema = {
     nutrition: { type: 'string' },
     trends: { type: 'string' },
     tomorrow: { type: 'string' },
-    action_items: { type: 'array', items: { type: 'string' } },
+    action_items: { type: 'array', maxItems: 3, items: { type: 'string' } },
     exercise_recommendations: {
       type: 'array',
+      maxItems: 4,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -943,7 +956,8 @@ const dailyReviewSchema = {
 
 const coachInstructions = [
   'You are the user\'s ongoing fitness coach for a 60-day cut/recomposition program.',
-  'Be concise but substantive. Respond to the actual record and do not manufacture problems or hypothetical extremes.',
+  'Be concise but substantive. Lead with the conclusion, do not recap metrics unless they support a decision, and stop once the useful recommendation is clear.',
+  'Respond to the actual record and do not manufacture problems or hypothetical extremes.',
   'Use longitudinal evidence: compare exercise performance, use 7-day weight averages, and consider the last 1-2 weeks before recommending changes.',
   'For lifting, prefer adding clean reps within the range before load unless the evidence supports increasing load.',
   'Do not treat exercise calorie estimates as calories to eat back. Account for the stated food-logging undercount context.',
@@ -1177,8 +1191,8 @@ async function submitDailyReview(request: Request, user: AuthenticatedUser, env:
     model,
     store: false,
     reasoning: { effort: 'low' },
-    max_output_tokens: 4000,
-    instructions: `${coachInstructions} Produce a daily review using the supplied JSON context. The tomorrow field must identify the next scheduled day, including its date, or clearly say none is scheduled. For every exercise recommendation, copy the exact exerciseId from today's workout. Use proposed_change.action update_target only when recommending a specific next-session target that can be represented by the supplied target types; otherwise use no_change and set every other proposed_change field to null. Never propose a load outside the user's available equipment.`,
+    max_output_tokens: 5000,
+    instructions: `${coachInstructions} Produce a compact daily review using the supplied JSON context. Keep each narrative field to one or two short sentences, include no more than three action items, and include only exercise recommendations that are useful for the next session. The tomorrow field must identify the next scheduled day, including its date, or clearly say none is scheduled. For every exercise recommendation, copy the exact exerciseId from today's workout. Use proposed_change.action update_target only when recommending a specific next-session target that can be represented by the supplied target types; otherwise use no_change and set every other proposed_change field to null. Never propose a load outside the user's available equipment.`,
     input: JSON.stringify(context),
     text: { format: { type: 'json_schema', name: 'daily_fitness_review', strict: true, schema: dailyReviewSchema } },
   }, user, 'daily_review', date, env)
@@ -1316,8 +1330,8 @@ async function sendCoachMessage(request: Request, user: AuthenticatedUser, env: 
     model,
     store: false,
     reasoning: { effort: 'low' },
-    max_output_tokens: 2000,
-    instructions: `${coachInstructions} Answer the follow-up question directly using the saved daily review and context.`,
+    max_output_tokens: 3000,
+    instructions: `${coachInstructions} Answer the follow-up question directly using the saved daily review and context. Default to 250 words or fewer unless the user explicitly asks for a detailed analysis.`,
     input,
     text: { verbosity: 'low' },
   }, user, 'coach_message', date, env)
@@ -1381,7 +1395,7 @@ async function sendProgramCoachMessage(request: Request, user: AuthenticatedUser
     env.DB.prepare(`
       SELECT role, content FROM program_coach_messages
       WHERE user_id = ? AND conversation_id = ?
-      ORDER BY created_at DESC LIMIT 12
+      ORDER BY created_at DESC LIMIT 8
     `).bind(user.id, conversation.id).all<{ role: 'user' | 'assistant'; content: string }>(),
   ])
   const input = [
@@ -1393,11 +1407,11 @@ async function sendProgramCoachMessage(request: Request, user: AuthenticatedUser
   const { response, trace } = await callOpenAI({
     model,
     store: false,
-    reasoning: { effort: 'medium' },
-    max_output_tokens: 3000,
-    instructions: `${coachInstructions} You are now the program-level coach, not the daily reviewer. Answer broader questions using the supplied multi-week evidence. Evaluate exercise selection and movement coverage, weekly frequency, volume, progression, adherence, recovery signals, nutrition/activity trends, and equipment constraints only as relevant to the actual question. Distinguish evidence from uncertainty. Do not recommend adding training merely because more is possible. If a program change is warranted, state exactly what to add, remove, replace, or reschedule and why. Recommendations are advisory; do not imply that you changed the user's plan.`,
+    reasoning: { effort: 'low' },
+    max_output_tokens: 5000,
+    instructions: `${coachInstructions} You are now the program-level coach, not the daily reviewer. Answer broader questions using the supplied multi-week evidence. Default to 300-450 words; use 250 words or fewer for a narrow question unless the user explicitly requests detail. Use no more than four short sections or six bullets. Evaluate exercise selection and movement coverage, weekly frequency, volume, progression, adherence, recovery signals, nutrition/activity trends, and equipment constraints only as relevant to the actual question. Distinguish evidence from uncertainty. Do not recommend adding training merely because more is possible. If a program change is warranted, state exactly what to add, remove, replace, or reschedule and why. Recommendations are advisory; do not imply that you changed the user's plan.`,
     input,
-    text: { verbosity: 'medium' },
+    text: { verbosity: 'low' },
   }, user, 'coach_message', asOfDate, env)
   const answer = responseText(response)
   if (!answer) {
