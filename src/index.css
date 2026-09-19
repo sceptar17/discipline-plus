@@ -7,7 +7,7 @@
   --border: rgba(255, 255, 255, 0.08);
   --text: #8b8d94;
   --text-strong: #f4efe6;
-  --text-muted: #73757d;
+  --text-muted: #9a9da6;
   --accent: #f36b00;
   --accent-soft: #9a846d;
   --accent-deep: #ff8d1d;
@@ -43,3 +43,23 @@ h1 { font-size: clamp(2rem, 4vw, 2.8rem); line-height: 1.05; font-weight: 700; }
 h2 { font-size: clamp(1.3rem, 2vw, 1.8rem); }
 h3 { font-size: 1.05rem; }
 a { color: inherit; }
+
+.fatalError {
+  width: min(620px, calc(100vw - 32px));
+  margin: 12vh auto 0;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.fatalError > * + * { margin-top: 12px; }
+.fatalError button {
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+}

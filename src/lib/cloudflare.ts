@@ -110,6 +110,44 @@ function apiUrl(path: string) {
   return `${apiOrigin}${path}`
 }
 
+export type ScheduleSnapshotPayload = {
+  expectedRevision: number
+  runs: unknown[]
+  days: unknown[]
+  items: unknown[]
+  logs: unknown[]
+}
+
+export async function loadScheduleRevision() {
+  const response = await fetch(apiUrl('/api/schedule/revision'), { credentials: 'include' })
+  const payload = await parseResponse(response) as { revision?: unknown } | null
+  const revision = Number(payload?.revision)
+  return Number.isInteger(revision) && revision >= 0 ? revision : 0
+}
+
+export async function saveScheduleSnapshot(payload: ScheduleSnapshotPayload) {
+  const response = await fetch(apiUrl('/api/schedule/snapshot'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: JSON.stringify(payload),
+  })
+  const body = await parseResponse(response) as { revision?: unknown } | null
+  const revision = Number(body?.revision)
+  if (!Number.isInteger(revision) || revision < 0) throw clientError('The server returned an invalid schedule revision.', response)
+  return revision
+}
+
+export async function savePlanSnapshot(payload: { plans: unknown[]; days: unknown[]; items: unknown[] }) {
+  const response = await fetch(apiUrl('/api/plans/snapshot'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: JSON.stringify(payload),
+  })
+  await parseResponse(response)
+}
+
 export async function loadCoachDay(date: string) {
   const response = await fetch(apiUrl(`/api/coach/day?date=${encodeURIComponent(date)}`), { credentials: 'include' })
   return parseResponse(response) as Promise<{ review?: unknown; messages?: unknown[] } | null>

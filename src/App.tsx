@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { AiDiagnostic, User } from './lib/cloudflare'
-import * as XLSX from 'xlsx'
 import './App.css'
-import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, supabase, supabaseUrl } from './lib/cloudflare'
+import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, loadScheduleRevision, savePlanSnapshot, saveScheduleSnapshot, supabase, supabaseUrl } from './lib/cloudflare'
+import { swapScheduleDates } from './lib/schedule'
 
 type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
@@ -34,6 +34,7 @@ type PlanTargetMode = 'latest' | 'template'
 type PlanCyclePreview = { cycleNumber: number; startDate: string; endDate: string; days: Array<{ date: string; dayNo: number; planDay: PlanDay }> }
 type PlanSchedulePreview = { cycles: PlanCyclePreview[]; dates: string[]; conflicts: string[]; startDate: string; endDate: string; totalDays: number; error: string }
 type Toast = { id: string; message: string }
+type ScheduleSaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
 type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
 type MobilePairing = { code: string; expiresAt: string; syncUrl: string }
@@ -91,10 +92,13 @@ type ConfirmState =
   | { kind: 'reset-all-data'; title: string; body: string }
   | { kind: 'reset-schedule-data'; title: string; body: string }
   | { kind: 'reset-progress-data'; title: string; body: string }
+  | { kind: 'revoke-mobile-sync'; title: string; body: string }
   | null
 
 const KEY = 'fitness-tracker-v1'
 const HEALTH_SYNC_DATE_KEY = 'discipline-plus-health-sync-date'
+const APP_TABS = ['schedule', 'coach', 'exercises', 'plans', 'progress', 'settings'] as const
+type AppTab = typeof APP_TABS[number]
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const EXERCISE_CATEGORY_OPTIONS = ['Bodyweight', 'Dumbbell']
 const HABIT_CATEGORY_OPTIONS = ['Spiritual', 'Mind', 'Home', 'Health']
@@ -102,7 +106,7 @@ const TRACKABLE_KIND_LABEL: Record<TK, string> = { exercise: 'Exercise', habit: 
 const TT_LABEL: Record<TT, string> = { count: 'Count', sets: 'Sets x reps', duration: 'Duration', distance: 'Distance', 'for-time': 'For time', weighted: 'Weighted sets' }
 const RM_LABEL: Record<RM, string> = { 'last-result': 'Last result', 'personal-best': 'Personal best' }
 const PM_LABEL: Record<PM, string> = { count: 'Count', time: 'Time', weight: 'Weight' }
-const id = (p: string) => `${p}-${Math.random().toString(36).slice(2, 9)}`
+const id = (p: string) => `${p}-${crypto.randomUUID()}`
 const d = (k: string) => new Date(`${k}T12:00:00`)
 const key = (dt: Date) => `${dt.getFullYear()}-${`${dt.getMonth() + 1}`.padStart(2, '0')}-${`${dt.getDate()}`.padStart(2, '0')}`
 const add = (k: string, n: number) => { const x = d(k); x.setDate(x.getDate() + n); return key(x) }
@@ -241,6 +245,8 @@ const targetForType = (type: TT, target: Target): Target => {
   return { sets: Math.max(1, Number(target.sets ?? 3)), reps: Math.max(1, Number(target.reps ?? 8)), weight: Math.max(0, Number(target.weight ?? 10)) }
 }
 const workbookPreviewFromFile = async (file: File): Promise<WorkbookPreview> => {
+  if (file.size > 5 * 1024 * 1024) throw new Error('Spreadsheet files must be 5 MB or smaller.')
+  const XLSX = await import('xlsx')
   const buffer = await file.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: 'array' })
   const sheets = workbook.SheetNames.slice(0, 8).map((name) => {
@@ -248,7 +254,7 @@ const workbookPreviewFromFile = async (file: File): Promise<WorkbookPreview> => 
     const rawRows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, { header: 1, raw: false, defval: '' })
     const rows = rawRows
       .slice(0, 180)
-      .map((row) => row.slice(0, 20).map((value) => `${value ?? ''}`.trim()))
+      .map((row) => row.slice(0, 20).map((value) => `${value ?? ''}`.trim().slice(0, 500)))
       .filter((row) => row.some((cell) => cell))
     return { name, rows }
   }).filter((sheet) => sheet.rows.length > 0)
@@ -1029,7 +1035,8 @@ export default function App() {
     return ensureAmpedData(raw ? JSON.parse(raw) as LegacyState : seed())
   })
   const today = key(new Date())
-  const [tab, setTab] = useState<'schedule' | 'coach' | 'exercises' | 'plans' | 'progress' | 'settings'>('schedule')
+  const initialHashTab = window.location.hash.replace(/^#\/?/, '')
+  const [tab, setTab] = useState<AppTab>(APP_TABS.includes(initialHashTab as AppTab) ? initialHashTab as AppTab : 'schedule')
   const [user, setUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(hasSupabaseEnv)
   const [selected, setSelected] = useState(today)
@@ -1039,6 +1046,7 @@ export default function App() {
   const [visibleListCount, setVisibleListCount] = useState(5)
   const [showPastDays, setShowPastDays] = useState(false)
   const [shift, setShift] = useState<number | undefined>(1)
+  const [swapDate, setSwapDate] = useState(add(today, 1))
   const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
   const [exerciseEditorMode, setExerciseEditorMode] = useState<ExerciseEditorMode>(state.exercises[0] ? 'existing' : 'new')
   const [exerciseForm, setExerciseForm] = useState<ExerciseForm>(() => state.exercises[0] ? formFromExercise(state.exercises[0]) : emptyExerciseForm())
@@ -1094,6 +1102,7 @@ export default function App() {
   const [applyPlanSaving, setApplyPlanSaving] = useState(false)
   const [keepCompletedPlanDays, setKeepCompletedPlanDays] = useState(true)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [scheduleSaveStatus, setScheduleSaveStatus] = useState<ScheduleSaveStatus>('idle')
   const [confirmState, setConfirmState] = useState<ConfirmState>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const planImportInputRef = useRef<HTMLInputElement | null>(null)
@@ -1104,12 +1113,25 @@ export default function App() {
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
   const authUserRef = useRef<string | null>(null)
   const scheduleSaveTimerRef = useRef<number | null>(null)
-  const scheduleRevisionRef = useRef(0)
+  const scheduleLoadRevisionRef = useRef(0)
+  const scheduleServerRevisionRef = useRef(0)
   const scheduleTouchHoldRef = useRef<number | null>(null)
   const scheduleTouchDragRef = useRef<ScheduleTouchDrag | null>(null)
   const scheduleCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const setRepsInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const suppressScheduleDayClickRef = useRef(false)
+  useEffect(() => {
+    const syncTabFromHistory = () => {
+      const hashTab = window.location.hash.replace(/^#\/?/, '')
+      setTab(APP_TABS.includes(hashTab as AppTab) ? hashTab as AppTab : 'schedule')
+    }
+    window.addEventListener('popstate', syncTabFromHistory)
+    return () => window.removeEventListener('popstate', syncTabFromHistory)
+  }, [])
+  const openTab = (nextTab: AppTab) => {
+    if (nextTab !== tab) window.history.pushState({}, '', `${window.location.pathname}${window.location.search}#/${nextTab}`)
+    setTab(nextTab)
+  }
   useEffect(() => {
     if (hasSupabaseEnv) return
     localStorage.setItem(KEY, JSON.stringify(state))
@@ -1121,6 +1143,9 @@ export default function App() {
   useEffect(() => {
     localScheduleRef.current = { schedule: state.schedule, runs: state.runs, logs: state.logs }
   }, [state.schedule, state.runs, state.logs])
+  useEffect(() => {
+    setSwapDate(add(selected, 1))
+  }, [selected])
   useEffect(() => {
     if (!toasts.length) return
     const timer = window.setTimeout(() => setToasts((current) => current.slice(1)), 2800)
@@ -1499,8 +1524,7 @@ export default function App() {
     options?: { changedPlanIds?: string[]; deletedPlanIds?: string[] },
   ) => {
     if (!supabase || !user) return true
-
-    const client = supabase
+    void options
     const planRows = nextPlans.map((plan0) => ({
       id: plan0.id,
       user_id: user.id,
@@ -1514,32 +1538,7 @@ export default function App() {
       day_number: index + 1,
       notes: day0.notes ?? '',
     })))
-    const changedPlanIds = options?.changedPlanIds ?? nextPlans.map((plan0) => plan0.id)
-    const deletedPlanIds = options?.deletedPlanIds ?? []
-
-    if (deletedPlanIds.length) {
-      const { error } = await client.from('plans').delete().eq('user_id', user.id).in('id', deletedPlanIds)
-      if (error) {
-        console.error('plan delete failed', error)
-        return false
-      }
-    }
-
-    const changedPlanRows = planRows.filter((row) => changedPlanIds.includes(row.id))
-    if (changedPlanRows.length) {
-      const { error } = await client.from('plans').upsert(changedPlanRows)
-      if (error) {
-        console.error('plan upsert failed', error)
-        return false
-      }
-    }
-
-    for (const planId of changedPlanIds) {
-      const plan0 = nextPlans.find((entry) => entry.id === planId)
-      if (!plan0) continue
-
-      const planDayRows = dayRows.filter((row) => row.plan_id === planId)
-      const nextItemRows = normalizePlanDaysData(plan0.days).flatMap((day0) => day0.items.map((item) => ({
+    const itemRows = nextPlans.flatMap((plan0) => normalizePlanDaysData(plan0.days).flatMap((day0) => day0.items.map((item) => ({
         id: item.id,
         user_id: user.id,
         plan_day_id: day0.id,
@@ -1547,43 +1546,14 @@ export default function App() {
         type: item.type,
         target: item.target,
         ref: item.ref,
-      })))
-
-      const { data: currentPlanDays } = await client.from('plan_days').select('id').eq('user_id', user.id).eq('plan_id', planId)
-      const currentDayIds = (currentPlanDays ?? []).map((row) => row.id)
-      if (currentDayIds.length) {
-        const { error } = await client.from('plan_items').delete().eq('user_id', user.id).in('plan_day_id', currentDayIds)
-        if (error) {
-          console.error('plan item reset failed', error)
-          return false
-        }
-      }
-
-      if (currentDayIds.length) {
-        const { error } = await client.from('plan_days').delete().eq('user_id', user.id).in('id', currentDayIds)
-        if (error) {
-          console.error('plan day reset failed', error)
-          return false
-        }
-      }
-
-      if (planDayRows.length) {
-        const { error } = await client.from('plan_days').upsert(planDayRows)
-        if (error) {
-          console.error('plan day upsert failed', error)
-          return false
-        }
-      }
-      if (nextItemRows.length) {
-        const { error } = await client.from('plan_items').upsert(nextItemRows)
-        if (error) {
-          console.error('plan item upsert failed', error)
-          return false
-        }
-      }
+      }))))
+    try {
+      await savePlanSnapshot({ plans: planRows, days: dayRows, items: itemRows })
+      return true
+    } catch (error) {
+      console.error('plan snapshot save failed', error)
+      return false
     }
-
-    return true
   }, [user])
   const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
     if (!supabase || !user) return true
@@ -1591,7 +1561,6 @@ export default function App() {
     const dependenciesReady = await ensureScheduleDependencies(nextSchedule, nextRuns, nextLogs, availablePlans)
     if (!dependenciesReady) return false
 
-    const client = supabase
     const validPlanIds = new Set(availablePlans.map((plan0) => plan0.id))
     const runRows = nextRuns.map((run) => ({
       id: run.id,
@@ -1633,84 +1602,30 @@ export default function App() {
       result: entry.result,
     }))
 
-    const [{ data: currentRuns }, { data: currentDays }, { data: currentItems }, { data: currentLogs }] = await Promise.all([
-      client.from('runs').select('id').eq('user_id', user.id),
-      client.from('schedule_days').select('id').eq('user_id', user.id),
-      client.from('schedule_items').select('id').eq('user_id', user.id),
-      client.from('logs').select('id').eq('user_id', user.id),
-    ])
-
-    const removedLogIds = (currentLogs ?? []).map((row) => row.id).filter((id0) => !logRows.some((row) => row.id === id0))
-    if (removedLogIds.length) {
-      const { error } = await client.from('logs').delete().eq('user_id', user.id).in('id', removedLogIds)
-      if (error) {
-        console.error('log delete failed', error)
-        return false
-      }
+    setScheduleSaveStatus('saving')
+    try {
+      scheduleServerRevisionRef.current = await saveScheduleSnapshot({
+        expectedRevision: scheduleServerRevisionRef.current,
+        runs: runRows,
+        days: dayRows,
+        items: itemRows,
+        logs: logRows,
+      })
+      setScheduleSaveStatus('saved')
+      return true
+    } catch (error) {
+      const status = (error as { context?: Response }).context?.status
+      setScheduleSaveStatus(status === 409 ? 'conflict' : 'error')
+      console.error('schedule snapshot save failed', error)
+      return false
     }
-
-    const removedItemIds = (currentItems ?? []).map((row) => row.id).filter((id0) => !itemRows.some((row) => row.id === id0))
-    if (removedItemIds.length) {
-      const { error } = await client.from('schedule_items').delete().eq('user_id', user.id).in('id', removedItemIds)
-      if (error) {
-        console.error('schedule item delete failed', error)
-        return false
-      }
-    }
-
-    const removedDayIds = (currentDays ?? []).map((row) => row.id).filter((id0) => !dayRows.some((row) => row.id === id0))
-    if (removedDayIds.length) {
-      const { error } = await client.from('schedule_days').delete().eq('user_id', user.id).in('id', removedDayIds)
-      if (error) {
-        console.error('schedule day delete failed', error)
-        return false
-      }
-    }
-
-    const removedRunIds = (currentRuns ?? []).map((row) => row.id).filter((id0) => !runRows.some((row) => row.id === id0))
-    if (removedRunIds.length) {
-      const { error } = await client.from('runs').delete().eq('user_id', user.id).in('id', removedRunIds)
-      if (error) {
-        console.error('run delete failed', error)
-        return false
-      }
-    }
-
-    if (runRows.length) {
-      const { error } = await client.from('runs').upsert(runRows)
-      if (error) {
-        console.error('run upsert failed', error)
-        return false
-      }
-    }
-    if (dayRows.length) {
-      const { error } = await client.from('schedule_days').upsert(dayRows)
-      if (error) {
-        console.error('schedule day upsert failed', error)
-        return false
-      }
-    }
-    if (itemRows.length) {
-      const { error } = await client.from('schedule_items').upsert(itemRows)
-      if (error) {
-        console.error('schedule item upsert failed', error)
-        return false
-      }
-    }
-    if (logRows.length) {
-      const { error } = await client.from('logs').upsert(logRows)
-      if (error) {
-        console.error('log upsert failed', error)
-        return false
-      }
-    }
-
-    return true
   }, [ensureScheduleDependencies, state.plans, user])
   const commitPlans = async (
     nextPlans: Plan[],
     options?: { selectedPlanId?: string | null; changedPlanIds?: string[]; deletedPlanIds?: string[] },
   ) => {
+    const previousPlans = state.plans
+    const previousSelectedPlanId = selectedPlanId
     const normalizedPlans = nextPlans.map((plan0) => ({ ...plan0, days: normalizePlanDaysData(plan0.days) }))
     setState((current) => ({ ...current, plans: normalizedPlans }))
     const resolvedPlanId = options?.selectedPlanId === undefined ? selectedPlanId : options.selectedPlanId
@@ -1723,6 +1638,10 @@ export default function App() {
       deletedPlanIds: options?.deletedPlanIds,
     })
     if (!ok) {
+      const previousPlan = previousPlans.find((plan0) => plan0.id === previousSelectedPlanId) ?? previousPlans[0] ?? null
+      setState((current) => ({ ...current, plans: previousPlans }))
+      setSelectedPlanId(previousPlan?.id ?? null)
+      setPlanForm(previousPlan ? formFromPlan(previousPlan) : emptyPlanForm())
       pushToast('Could not save plans.')
       return false
     }
@@ -1744,8 +1663,9 @@ export default function App() {
     }, 250)
   }, [persistScheduleData])
   const commitScheduleState = async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], options?: { selectedDate?: string; persistMode?: 'queued' | 'immediate' }) => {
+    const previous = localScheduleRef.current
     const normalizedSchedule = nextSchedule.map(normalizeScheduleDay)
-    scheduleRevisionRef.current += 1
+    scheduleLoadRevisionRef.current += 1
     localScheduleRef.current = { schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }
     setState((current) => ({ ...current, schedule: normalizedSchedule, runs: nextRuns, logs: nextLogs }))
     if (options?.selectedDate) {
@@ -1759,6 +1679,8 @@ export default function App() {
       }
       const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs, state.plans)
       if (!ok) {
+        localScheduleRef.current = previous
+        setState((current) => ({ ...current, schedule: previous.schedule, runs: previous.runs, logs: previous.logs }))
         pushToast('Could not save schedule.')
         return false
       }
@@ -1886,15 +1808,17 @@ export default function App() {
     const client = supabase
     const ownerId = user.id
     const syncSchedule = async () => {
-      const syncRevision = scheduleRevisionRef.current
-      const [{ data: runRows, error: runError }, { data: dayRows, error: dayError }, { data: itemRows, error: itemError }, { data: logRows, error: logError }] = await Promise.all([
+      const syncRevision = scheduleLoadRevisionRef.current
+      const [{ data: runRows, error: runError }, { data: dayRows, error: dayError }, { data: itemRows, error: itemError }, { data: logRows, error: logError }, serverRevision] = await Promise.all([
         client.from('runs').select('id, plan_id, start_date, name, status, completed_at').eq('user_id', user.id).order('start_date', { ascending: true }),
         client.from('schedule_days').select('id, date, notes, skipped, run_id, day_no').eq('user_id', user.id).order('date', { ascending: true }),
         client.from('schedule_items').select('id, schedule_day_id, exercise_id, type, target, ref, done, result').eq('user_id', user.id),
         client.from('logs').select('id, source_item_id, exercise_id, date, type, target, result').eq('user_id', user.id).order('date', { ascending: true }),
+        loadScheduleRevision(),
       ])
 
-      if (!active || authUserRef.current !== ownerId || scheduleRevisionRef.current !== syncRevision || runError || dayError || itemError || logError || !runRows || !dayRows || !itemRows || !logRows) return
+      if (!active || authUserRef.current !== ownerId || scheduleLoadRevisionRef.current !== syncRevision || runError || dayError || itemError || logError || !runRows || !dayRows || !itemRows || !logRows) return
+      scheduleServerRevisionRef.current = serverRevision
 
       if (runRows.length === 0 && dayRows.length === 0 && itemRows.length === 0 && logRows.length === 0) {
         const localSchedule = localScheduleRef.current.schedule
@@ -1902,7 +1826,7 @@ export default function App() {
         const localLogs = localScheduleRef.current.logs
         if (localSchedule.length === 0 && localRuns.length === 0 && localLogs.length === 0) return
         const seeded = await persistScheduleData(localSchedule, localRuns, localLogs)
-        if (!seeded || !active || authUserRef.current !== ownerId || scheduleRevisionRef.current !== syncRevision) return
+        if (!seeded || !active || authUserRef.current !== ownerId || scheduleLoadRevisionRef.current !== syncRevision) return
         setState((current) => ({ ...current, schedule: localSchedule.map(normalizeScheduleDay), runs: localRuns, logs: localLogs }))
         return
       }
@@ -1910,7 +1834,7 @@ export default function App() {
       const remoteRuns = mapRunRows(runRows)
       const remoteSchedule = mapScheduleRows(dayRows, itemRows)
       const remoteLogs = mapLogRows(logRows)
-      if (authUserRef.current !== ownerId || scheduleRevisionRef.current !== syncRevision) return
+      if (authUserRef.current !== ownerId || scheduleLoadRevisionRef.current !== syncRevision) return
       setState((current) => ({ ...current, runs: remoteRuns, schedule: remoteSchedule, logs: remoteLogs }))
     }
 
@@ -1942,6 +1866,11 @@ export default function App() {
     window.setTimeout(() => planDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
   }
   const userAvatar = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null
+  const retryScheduleSave = async () => {
+    const current = localScheduleRef.current
+    const ok = await persistScheduleData(current.schedule, current.runs, current.logs, state.plans)
+    if (!ok) pushToast('The schedule still could not be saved.')
+  }
   const signInWithGoogle = async () => {
     if (!supabase) return
     const { error } = await supabase.auth.signInWithOAuth({
@@ -2054,6 +1983,7 @@ export default function App() {
       return
     }
     setDailyReview(review)
+    setCoachMessages([])
     pushToast(dailyReview ? 'Daily review refreshed.' : 'Daily review ready.')
   }
 
@@ -2199,6 +2129,39 @@ export default function App() {
     const nextSchedule = state.schedule.map((day0) => day0.date === selected ? normalizeScheduleDay({ ...day0, items: day0.items.filter((item) => item.id !== itemId) }) : day0)
     const nextLogs = state.logs.filter((entry) => entry.sourceItemId !== itemId)
     await commitScheduleState(nextSchedule, state.runs, nextLogs)
+  }
+  const revokeMobileSync = async () => {
+    if (!supabase || !user) return
+    const { error } = await supabase.functions.invoke('revoke-mobile-sync')
+    if (error) {
+      pushToast('Could not disconnect the phone.')
+      return
+    }
+    setMobileSyncStatus(null)
+    setMobilePairing(null)
+    pushToast('Android phone disconnected.')
+  }
+  const swapScheduleDays = async (sourceDate: string, targetDate: string) => {
+    if (sourceDate === targetDate) {
+      pushToast('Choose a different date to swap.')
+      return
+    }
+    const swapped = swapScheduleDates(state.schedule, state.logs, sourceDate, targetDate, normalizeScheduleDay)
+    if (!swapped) {
+      pushToast('Neither date has anything scheduled.')
+      return
+    }
+    const nextSchedule = swapped.schedule
+
+    const nextRuns = state.runs.map((run) => {
+      const firstDate = nextSchedule
+        .filter((entry) => entry.runId === run.id)
+        .map((entry) => entry.date)
+        .sort()[0]
+      return firstDate && firstDate !== run.startDate ? { ...run, startDate: firstDate } : run
+    })
+    const saved = await commitScheduleState(nextSchedule, nextRuns, swapped.logs, { persistMode: 'immediate' })
+    if (saved) pushToast(`Swapped ${fmtShort(sourceDate)} and ${fmtShort(targetDate)}.`)
   }
   const moveScheduleDay = async (sourceDate: string, targetDate: string, placement: 'before' | 'after') => {
     if (sourceDate === targetDate) return
@@ -2423,7 +2386,7 @@ export default function App() {
     cancelLogEdit()
   }
   const openLogDay = (log: Log) => {
-    setTab('schedule')
+    openTab('schedule')
     setSelected(log.date)
     setMonth(monthKey(log.date))
   }
@@ -2832,6 +2795,7 @@ export default function App() {
     if (confirmState.kind === 'reset-all-data') await resetAllData()
     if (confirmState.kind === 'reset-schedule-data') await resetScheduleData()
     if (confirmState.kind === 'reset-progress-data') await resetProgressData()
+    if (confirmState.kind === 'revoke-mobile-sync') await revokeMobileSync()
     setConfirmState(null)
   }
   const cancelConfirm = () => {
@@ -2982,11 +2946,19 @@ export default function App() {
           </div>
 
           <div className="profileDock">
+            {hasSupabaseEnv && user && scheduleSaveStatus !== 'idle' && <button
+              className={`saveIndicator ${scheduleSaveStatus}`}
+              type="button"
+              aria-live="polite"
+              onClick={() => scheduleSaveStatus === 'conflict' ? window.location.reload() : scheduleSaveStatus === 'error' ? void retryScheduleSave() : undefined}
+              disabled={scheduleSaveStatus === 'saving' || scheduleSaveStatus === 'saved'}
+              title={scheduleSaveStatus === 'conflict' ? 'Reload to reconcile changes from another tab or device.' : scheduleSaveStatus === 'error' ? 'Retry saving.' : undefined}
+            >{{ saving: 'Saving…', saved: 'Saved', error: 'Save failed · Retry', conflict: 'Changed elsewhere · Reload', idle: '' }[scheduleSaveStatus]}</button>}
             {hasSupabaseEnv && !user && !authLoading && <button className="pill authButton" onClick={signInWithGoogle}>Sign in</button>}
-            {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => setTab('settings')} aria-label="Open profile settings">
+            {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => openTab('settings')} aria-label="Open profile settings">
               {userAvatar ? <img src={userAvatar} alt={user.email ?? 'Profile'} className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
             </button>}
-            <button className={tab === 'settings' ? 'iconPill activeIconPill settingsButton' : 'iconPill settingsButton'} onClick={() => setTab('settings')} aria-label="Open settings">
+            <button className={tab === 'settings' ? 'iconPill activeIconPill settingsButton' : 'iconPill settingsButton'} onClick={() => openTab('settings')} aria-label="Open settings">
               <svg className="settingsGlyph" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 8.7a3.3 3.3 0 1 0 0 6.6a3.3 3.3 0 0 0 0-6.6Zm9 3.3l-2.1-.7c-.1-.4-.2-.8-.4-1.2l1-2L17.9 6l-2 .9c-.4-.2-.8-.3-1.2-.4L14 4h-4l-.7 2.5c-.4.1-.8.2-1.2.4l-2-.9L4.5 8.1l1 2c-.2.4-.3.8-.4 1.2L3 12l.7 2.1c.1.4.2.8.4 1.2l-1 2L6.1 18l2-.9c.4.2.8.3 1.2.4L10 20h4l.7-2.5c.4-.1.8-.2 1.2-.4l2 .9l1.6-1.9l-1-2c.2-.4.3-.8.4-1.2L21 12Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -2995,7 +2967,7 @@ export default function App() {
         </div>
 
         <nav className="topNav" aria-label="Primary navigation">
-          {(['schedule', 'coach', 'plans', 'exercises'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => setTab(x)}>{{ schedule: 'Today', coach: 'Coach', exercises: 'Library', plans: 'Plan' }[x]}</button>)}
+          {(['schedule', 'coach', 'plans', 'exercises'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => openTab(x)}>{{ schedule: 'Today', coach: 'Coach', exercises: 'Library', plans: 'Plan' }[x]}</button>)}
         </nav>
       </header>
 
@@ -3199,6 +3171,14 @@ export default function App() {
                 </select>
               </label>
               <label className="field"><span>Day notes</span><textarea className="shortTextarea" rows={2} aria-label="Day notes" placeholder="Optional notes" value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
+              <div className="swapDayControls">
+                <label className="field swapDayField">
+                  <span>Swap this day with</span>
+                  <input type="date" value={swapDate} onChange={(event) => setSwapDate(event.target.value)} />
+                  <small>Only these two calendar days exchange places. The rest of the program stays put.</small>
+                </label>
+                <button className="pill" onClick={() => void swapScheduleDays(selected, swapDate)} disabled={!swapDate || swapDate === selected}>Swap days</button>
+              </div>
               {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={toggleSkippedDay}>{day.skipped ? 'Unskip day' : 'Skip day'}</button><div className="inline compactInline"><input type="number" min={1} max={99} value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value))} aria-label="Days to push forward" /><button className="pill" onClick={shiftPlan} disabled={!shift || shift < 1}>Push forward</button></div></div>}
             </div>
           </details>
@@ -3774,12 +3754,17 @@ export default function App() {
               </div> : <p>Create a one-time code after installing the companion app.</p>}
               <div className="nav">
                 <button className="primary" onClick={createMobilePairing} disabled={mobilePairingLoading || !user}>{mobilePairingLoading ? 'Creating code…' : mobilePairing ? 'Create a new code' : 'Pair Android phone'}</button>
+                {mobileSyncStatus && <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'revoke-mobile-sync', title: 'Disconnect Android phone?', body: 'The current helper token will stop working. You can pair the phone again later with a new code.' })}>Disconnect phone</button>}
               </div>
             </div>
             <div className="card stack">
               <strong>Cloudflare</strong>
               <p>{hasSupabaseEnv ? `Connected backend: ${supabaseUrl}` : 'The Cloudflare backend is not configured in this build.'}</p>
               <span className={hasSupabaseEnv ? 'status' : 'status warn'}>{hasSupabaseEnv ? 'Workers + D1 ready' : 'Backend unavailable'}</span>
+            </div>
+            <div className="card stack">
+              <strong>AI coach privacy</strong>
+              <p>When you request a review or send a coach message, the relevant workout history, nutrition, activity, weight trends, goals, coaching notes, and your message are sent to OpenAI to generate the answer. Requests are configured with storage disabled. Diagnostics keep status and timing only—not prompts, health data, or responses.</p>
             </div>
             <div className="card stack">
               <div><strong>AI coach diagnostics</strong><p>Recent sanitized coach requests. Health data, prompts, responses, and API credentials are never included.</p></div>

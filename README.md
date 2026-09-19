@@ -4,6 +4,8 @@ Discipline+ is a private fitness, habit, scheduling, and progress-tracking app. 
 
 - Hostinger serves the React single-page app at `fitness.aparishhouse.com` from the `main` branch.
 - Cloudflare Workers provides the authenticated API at `discipline-plus.bfust27.workers.dev`.
+
+Production changes are verified by `.github/workflows/deploy.yml`. A push to `main` runs lint, tests, and a production build before applying D1 migrations and deploying both Workers. Configure the repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` to enable those deployment steps. Hostinger continues to publish the same verified commit from `main`.
 - Cloudflare D1 stores profiles, exercises, plans, schedules, and progress logs.
 - Cloudflare Access protects the Worker API, and the Worker permits only the configured owner email.
 - The Worker calls OpenAI for spreadsheet-to-plan analysis.

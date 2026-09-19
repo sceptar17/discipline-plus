@@ -414,6 +414,49 @@
   border-top: 1px solid var(--border);
 }
 
+.saveIndicator {
+  min-height: 34px;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.saveIndicator.saved {
+  color: #9fd7b0;
+}
+
+.saveIndicator.error,
+.saveIndicator.conflict {
+  color: #ffd0bf;
+  border-color: rgba(255, 133, 96, 0.35);
+  background: rgba(145, 36, 21, 0.18);
+}
+
+.swapDayControls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.swapDayField {
+  flex: 1;
+  min-width: 0;
+}
+
+.swapDayField small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.swapDayControls > button {
+  min-height: 48px;
+  white-space: nowrap;
+}
+
 .inline {
   flex-direction: row;
   align-items: center;
@@ -1280,6 +1323,8 @@
 }
 
 .coachReviewCard {
+  --coach-text: #ebe8e1;
+  --coach-muted: #b9b6ae;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -1287,6 +1332,8 @@
   border: 1px solid rgba(243, 107, 0, 0.28);
   border-radius: 22px;
   background: linear-gradient(145deg, rgba(243, 107, 0, 0.11), rgba(243, 107, 0, 0.025) 46%), var(--surface);
+  color: var(--coach-text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 }
 
 .coachReviewHeading,
@@ -1310,7 +1357,7 @@
 
 .coachReviewEmpty p,
 .coachConversation > div:first-child p {
-  color: var(--text-muted);
+  color: var(--coach-muted);
 }
 
 .submitReviewButton {
@@ -1338,7 +1385,10 @@
 .coachConversation p,
 .coachActions ul {
   margin: 5px 0 0;
-  line-height: 1.55;
+  color: var(--coach-text);
+  font-size: 1rem;
+  font-weight: 450;
+  line-height: 1.65;
 }
 
 .coachReviewSections {
@@ -1365,7 +1415,7 @@
 .coachExerciseRecommendations small {
   display: block;
   margin-top: 4px;
-  color: var(--text-muted);
+  color: var(--coach-muted);
   line-height: 1.45;
 }
 
@@ -1412,7 +1462,7 @@
 
 .targetChangePreview span,
 .recommendationActionMessage {
-  color: var(--text-muted);
+  color: var(--coach-muted);
   font-size: 0.78rem;
 }
 
@@ -1451,7 +1501,7 @@
 }
 
 .coachMessage span {
-  color: var(--text-muted);
+  color: var(--coach-muted);
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -1477,11 +1527,15 @@
 }
 
 .programCoachPanel {
+  --coach-text: #ebe8e1;
+  --coach-muted: #b9b6ae;
   display: flex;
   flex-direction: column;
   gap: 18px;
   border-color: rgba(243, 107, 0, 0.25);
   background: linear-gradient(150deg, rgba(243, 107, 0, 0.08), transparent 42%), var(--panel);
+  color: var(--coach-text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 }
 
 .programCoachHeader,
@@ -1505,7 +1559,7 @@
 .programCoachWindow p,
 .programCoachEmpty p {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--coach-muted);
 }
 
 .programCoachHeader .sourceBadge {
@@ -1529,7 +1583,7 @@
 
 .programCoachContextLine span,
 .programCoachAdvisory {
-  color: var(--text-muted);
+  color: var(--coach-muted);
   line-height: 1.5;
 }
 
@@ -2484,6 +2538,15 @@ textarea:focus-visible {
     text-align: left;
   }
 
+  .swapDayControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .swapDayControls > button {
+    width: 100%;
+  }
+
   .coachReviewCard {
     padding: 18px;
   }
@@ -2534,5 +2597,20 @@ textarea:focus-visible {
 
   .completedRunActions {
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  button:hover {
+    transform: none;
   }
 }

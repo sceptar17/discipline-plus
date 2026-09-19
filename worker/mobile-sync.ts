@@ -34,6 +34,27 @@ function json(data: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(data), { ...init, headers })
 }
 
+function withSecurityHeaders(response: Response) {
+  const headers = new Headers(response.headers)
+  headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+  headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()')
+  headers.set('Referrer-Policy', 'no-referrer')
+  headers.set('X-Content-Type-Options', 'nosniff')
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+function requireBoundedRequest(request: Request, maxBytes: number) {
+  const length = Number(request.headers.get('Content-Length'))
+  if (Number.isFinite(length) && length > maxBytes) throw new HttpError(413, 'Request is too large.')
+}
+
+function validDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -69,6 +90,7 @@ function normalizedCode(value: unknown) {
 }
 
 async function pair(request: Request, env: SyncEnv) {
+  requireBoundedRequest(request, 20_000)
   const body = await request.json<PairRequest>()
   const codeHash = await sha256(normalizedCode(body.code))
   const pairing = await env.DB.prepare(`
@@ -83,6 +105,7 @@ async function pair(request: Request, env: SyncEnv) {
   const token = randomToken()
   const deviceId = crypto.randomUUID()
   const now = new Date().toISOString()
+  const expiresAt = new Date(Date.now() + 180 * 86400000).toISOString()
   const claimed = await env.DB.prepare(`
     UPDATE mobile_pairing_codes SET used_at = ? WHERE id = ? AND used_at IS NULL
   `).bind(now, pairing.id).run()
@@ -90,10 +113,10 @@ async function pair(request: Request, env: SyncEnv) {
     throw new HttpError(409, 'Pairing code was already used. Create a new code and try again.')
   }
   await env.DB.prepare(`
-    INSERT INTO mobile_devices (id, user_id, name, token_hash, last_used_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(deviceId, pairing.user_id, name, await sha256(token), now, now, now).run()
-  return json({ token, deviceId })
+    INSERT INTO mobile_devices (id, user_id, name, token_hash, last_used_at, expires_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(deviceId, pairing.user_id, name, await sha256(token), now, expiresAt, now, now).run()
+  return json({ token, deviceId, expiresAt })
 }
 
 async function authenticateDevice(request: Request, env: SyncEnv) {
@@ -101,7 +124,8 @@ async function authenticateDevice(request: Request, env: SyncEnv) {
   const match = /^Bearer\s+(.+)$/i.exec(header)
   if (!match) throw new HttpError(401, 'Phone pairing is required.')
   const device = await env.DB.prepare(`
-    SELECT id, user_id FROM mobile_devices WHERE token_hash = ? AND revoked_at IS NULL
+    SELECT id, user_id FROM mobile_devices
+    WHERE token_hash = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `).bind(await sha256(match[1])).first<{ id: string; user_id: string }>()
   if (!device) throw new HttpError(401, 'Phone pairing is no longer valid.')
   return device
@@ -136,6 +160,7 @@ function backgroundPermission(value: unknown) {
 }
 
 async function reportStatus(request: Request, env: SyncEnv) {
+  requireBoundedRequest(request, 20_000)
   const device = await authenticateDevice(request, env)
   const body = await request.json<StatusRequest>()
   const allowedStatuses = new Set(['scheduled', 'running', 'missing_permission', 'failed'])
@@ -159,6 +184,7 @@ async function reportStatus(request: Request, env: SyncEnv) {
 }
 
 async function sync(request: Request, env: SyncEnv) {
+  requireBoundedRequest(request, 500_000)
   const device = await authenticateDevice(request, env)
   const body = await request.json<SyncRequest>()
   if (!Array.isArray(body.days) || body.days.length === 0 || body.days.length > 15) {
@@ -171,20 +197,21 @@ async function sync(request: Request, env: SyncEnv) {
   const explicitHealthRefresh = trigger === 'web'
   const now = new Date().toISOString()
   const statements: D1PreparedStatement[] = []
+  const days = body.days as DayInput[]
+  if (days.some((day) => !isRecord(day) || !validDate(day.date))) throw new HttpError(400, 'A synced date is invalid.')
+  const existingResults = await env.DB.batch(days.map((day) => env.DB.prepare(`
+    SELECT calories_kcal, protein_g, carbs_g, fat_g, steps, nutrition_source, steps_source, provenance
+    FROM daily_health WHERE user_id = ? AND date = ?
+  `).bind(device.user_id, day.date as string)))
 
-  for (const rawDay of body.days as DayInput[]) {
-    if (!isRecord(rawDay) || typeof rawDay.date !== 'string' || !DATE_PATTERN.test(rawDay.date)) {
-      throw new HttpError(400, 'A synced date is invalid.')
-    }
-    const date = rawDay.date
+  for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
+    const rawDay = days[dayIndex]
+    const date = rawDay.date as string
     const nutrition = isRecord(rawDay.nutrition) ? rawDay.nutrition as NutritionInput : null
     const weight = isRecord(rawDay.weight) ? rawDay.weight as WeightInput : null
     const steps = asOptionalNumber(rawDay.steps, 0, 250000)
     if (steps !== null && !Number.isInteger(steps)) throw new HttpError(400, 'Synced steps must be a whole number.')
-    const existing = await env.DB.prepare(`
-      SELECT calories_kcal, protein_g, carbs_g, fat_g, steps, nutrition_source, steps_source, provenance
-      FROM daily_health WHERE user_id = ? AND date = ?
-    `).bind(device.user_id, date).first<Record<string, unknown>>()
+    const existing = existingResults[dayIndex]?.results?.[0] as Record<string, unknown> | undefined
     // Background syncs must not trample intentional web edits. An explicit
     // "Sync health data" request, however, means the user wants Health Connect
     // to refresh the displayed values even if an earlier save marked them as
@@ -286,16 +313,16 @@ export default {
   async fetch(request: Request, env: SyncEnv): Promise<Response> {
     try {
       const url = new URL(request.url)
-      if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true })
-      if (request.method === 'POST' && url.pathname === '/pair') return await pair(request, env)
-      if (request.method === 'POST' && url.pathname === '/sync') return await sync(request, env)
-      if (request.method === 'POST' && url.pathname === '/status') return await reportStatus(request, env)
+      if (request.method === 'GET' && url.pathname === '/health') return withSecurityHeaders(json({ ok: true }))
+      if (request.method === 'POST' && url.pathname === '/pair') return withSecurityHeaders(await pair(request, env))
+      if (request.method === 'POST' && url.pathname === '/sync') return withSecurityHeaders(await sync(request, env))
+      if (request.method === 'POST' && url.pathname === '/status') return withSecurityHeaders(await reportStatus(request, env))
       throw new HttpError(404, 'Not found.')
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500
       const message = error instanceof HttpError ? error.message : 'Internal server error.'
       console.error(JSON.stringify({ message: 'mobile sync request failed', status, error: error instanceof Error ? error.message : String(error) }))
-      return json({ error: message }, { status })
+      return withSecurityHeaders(json({ error: message }, { status }))
     }
   },
 } satisfies ExportedHandler<SyncEnv>
