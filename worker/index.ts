@@ -151,9 +151,9 @@ const TABLES = {
     ownerColumn: 'user_id',
     columns: {
       id: 'text', user_id: 'text', goal_name: 'text', start_weight_lb: 'number', height_inches: 'number', target_weight_lb: 'number', desired_loss_min_lb: 'number',
-      desired_loss_max_lb: 'number', targets: 'json', equipment: 'text', calorie_context: 'text', coaching_style: 'json', created_at: 'text', updated_at: 'text',
+      desired_loss_max_lb: 'number', targets: 'json', equipment: 'text', calorie_context: 'text', coaching_style: 'json', birth_year: 'integer', sex: 'text', powerblock_colors: 'boolean', created_at: 'text', updated_at: 'text',
     },
-    writable: ['id', 'user_id', 'goal_name', 'start_weight_lb', 'height_inches', 'target_weight_lb', 'desired_loss_min_lb', 'desired_loss_max_lb', 'targets', 'equipment', 'calorie_context', 'coaching_style'],
+    writable: ['id', 'user_id', 'goal_name', 'start_weight_lb', 'height_inches', 'target_weight_lb', 'desired_loss_min_lb', 'desired_loss_max_lb', 'targets', 'equipment', 'calorie_context', 'coaching_style', 'birth_year', 'sex', 'powerblock_colors'],
   },
   coaching_notes: {
     ownerColumn: 'user_id',
@@ -694,7 +694,7 @@ async function buildDailyReviewContext(user: AuthenticatedUser, date: string, en
   `).bind(user.id, date, date).all<{ local_date: string; weight_lb: number; source: string; measured_at: string }>()
   const profile = await env.DB.prepare(`
     SELECT goal_name, start_weight_lb, height_inches, target_weight_lb,
-      desired_loss_min_lb, desired_loss_max_lb, targets, equipment, calorie_context, coaching_style
+      desired_loss_min_lb, desired_loss_max_lb, targets, equipment, calorie_context, coaching_style, birth_year, sex
     FROM coaching_profiles WHERE user_id = ?
   `).bind(user.id).first<Record<string, unknown>>()
   const notes = await env.DB.prepare(`
@@ -770,6 +770,8 @@ async function buildDailyReviewContext(user: AuthenticatedUser, date: string, en
     },
     goals: profile ? {
       name: profile.goal_name,
+      age: typeof profile.birth_year === 'number' ? new Date().getUTCFullYear() - profile.birth_year : null,
+      sex: profile.sex ?? null,
       startWeightLb: profile.start_weight_lb,
       heightInches: profile.height_inches,
       targetWeightLb: profile.target_weight_lb,
@@ -1066,7 +1068,7 @@ async function buildProgramCoachContext(user: AuthenticatedUser, asOfDate: strin
     `).bind(user.id, startDate, asOfDate),
     env.DB.prepare(`
       SELECT goal_name, start_weight_lb, height_inches, target_weight_lb,
-        desired_loss_min_lb, desired_loss_max_lb, targets, equipment, calorie_context, coaching_style
+        desired_loss_min_lb, desired_loss_max_lb, targets, equipment, calorie_context, coaching_style, birth_year, sex
       FROM coaching_profiles WHERE user_id = ?
     `).bind(user.id),
     env.DB.prepare(`
@@ -1174,6 +1176,8 @@ async function buildProgramCoachContext(user: AuthenticatedUser, asOfDate: strin
     coverage: { startDate, endDate: asOfDate, lookbackDays },
     goals: profile ? {
       name: profile.goal_name,
+      age: typeof profile.birth_year === 'number' ? new Date().getUTCFullYear() - profile.birth_year : null,
+      sex: profile.sex ?? null,
       startWeightLb: profile.start_weight_lb,
       heightInches: profile.height_inches,
       targetWeightLb: profile.target_weight_lb,

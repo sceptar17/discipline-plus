@@ -41,7 +41,7 @@
 .appShellHeader {
   border-radius: 28px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, rgb(var(--ink-rgb) / 0.012), rgb(var(--ink-rgb) / 0.0)),
     var(--panel);
 }
 
@@ -57,15 +57,15 @@
   width: 40px;
   height: 40px;
   border-radius: 999px;
-  background: linear-gradient(180deg, #ff8d1d 0%, #f36b00 100%);
-  box-shadow: 0 10px 24px rgba(243, 107, 0, 0.28);
+  background: var(--accent);
+  box-shadow: 0 10px 24px rgb(var(--accent-rgb) / 0.28);
 }
 
 .brandMark::before {
   content: "";
   position: absolute;
   inset: 8px 11px 8px 10px;
-  background: #fff3df;
+  background: #ffffff;
   clip-path: polygon(45% 0%, 100% 0%, 62% 44%, 92% 44%, 28% 100%, 46% 58%, 14% 58%);
 }
 
@@ -88,7 +88,7 @@
   display: inline-flex;
   gap: 6px;
   padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid rgb(var(--ink-rgb) / 0.024);
   border-radius: 999px;
   background: var(--surface);
 }
@@ -131,35 +131,35 @@
 .pill.active,
 .primary,
 .topNavButton.active {
-  background: linear-gradient(180deg, #ff8d1d 0%, #f36b00 100%);
-  border-color: #f36b00;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
-  box-shadow: 0 12px 28px rgba(243, 107, 0, 0.22);
+  box-shadow: 0 12px 28px rgb(var(--accent-rgb) / 0.22);
 }
 
 .softActionPill {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: rgb(var(--ink-rgb) / 0.024);
+  border-color: rgb(var(--ink-rgb) / 0.06);
   color: var(--text-strong);
   box-shadow: none;
 }
 
 .softActionPill:hover {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(243, 107, 0, 0.3);
+  background: rgb(var(--ink-rgb) / 0.042);
+  border-color: rgb(var(--accent-rgb) / 0.3);
 }
 
 .dangerPill {
-  background: rgba(120, 30, 18, 0.28);
-  border-color: rgba(255, 120, 92, 0.22);
-  color: #ffb6a2;
+  background: rgb(var(--danger-rgb) / 0.08);
+  border-color: rgb(var(--danger-rgb) / 0.22);
+  color: var(--danger);
   box-shadow: none;
 }
 
 .dangerPill:hover {
-  background: rgba(145, 36, 21, 0.36);
-  border-color: rgba(255, 140, 102, 0.34);
-  color: #ffd3c6;
+  background: rgb(var(--danger-rgb) / 0.14);
+  border-color: rgb(var(--danger-rgb) / 0.34);
+  color: var(--danger);
 }
 
 .authButton {
@@ -376,13 +376,13 @@
   align-items: center;
   padding: 0.5rem 0.85rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgb(var(--ink-rgb) / 0.03);
   color: var(--text-strong);
 }
 
 .warn {
-  background: rgba(243, 107, 0, 0.14);
-  color: #ffb067;
+  background: rgb(var(--accent-rgb) / 0.14);
+  color: var(--accent-strong);
 }
 
 .field input,
@@ -419,21 +419,21 @@
   padding: 0.45rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.035);
+  background: rgb(var(--ink-rgb) / 0.021);
   color: var(--text-muted);
   font: inherit;
   font-size: 0.78rem;
 }
 
 .saveIndicator.saved {
-  color: #9fd7b0;
+  color: var(--success);
 }
 
 .saveIndicator.error,
 .saveIndicator.conflict {
-  color: #ffd0bf;
-  border-color: rgba(255, 133, 96, 0.35);
-  background: rgba(145, 36, 21, 0.18);
+  color: var(--danger);
+  border-color: rgb(var(--danger-rgb) / 0.35);
+  background: rgb(var(--danger-rgb) / 0.08);
 }
 
 .swapDayControls {
@@ -499,8 +499,8 @@
   border-radius: 18px;
   border: 1px solid var(--border);
   background:
-    linear-gradient(90deg, rgba(243, 107, 0, 0.08), rgba(243, 107, 0, 0.02)),
-    rgba(255, 255, 255, 0.01);
+    linear-gradient(90deg, rgb(var(--accent-rgb) / 0.08), rgb(var(--accent-rgb) / 0.02)),
+    rgb(var(--ink-rgb) / 0.006);
   overflow: hidden;
 }
 
@@ -525,7 +525,7 @@
   top: 0;
   bottom: 0;
   width: 4px;
-  background: linear-gradient(180deg, #ff8d1d 0%, #f36b00 100%);
+  background: var(--accent);
 }
 
 .todaySummary h2,
@@ -632,7 +632,7 @@
 }
 
 .doneEntry {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgb(var(--ink-rgb) / 0.024);
   color: var(--text-muted);
 }
 
@@ -693,17 +693,17 @@
 
 .day.selected,
 .activeItem {
-  background: rgba(243, 107, 0, 0.14);
-  border-color: rgba(243, 107, 0, 0.48);
+  background: rgb(var(--accent-rgb) / 0.14);
+  border-color: rgb(var(--accent-rgb) / 0.48);
 }
 
 .todayMark {
-  border-color: rgba(243, 107, 0, 0.72);
+  border-color: rgb(var(--accent-rgb) / 0.72);
 }
 
 .completeDay {
-  background: rgba(243, 107, 0, 0.09);
-  border-color: rgba(243, 107, 0, 0.38);
+  background: rgb(var(--accent-rgb) / 0.09);
+  border-color: rgb(var(--accent-rgb) / 0.38);
 }
 
 .dim {
@@ -715,7 +715,7 @@
   border-radius: 18px;
   text-align: left;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, rgb(var(--ink-rgb) / 0.015), rgb(var(--ink-rgb) / 0.0)),
     var(--surface);
 }
 
@@ -741,7 +741,7 @@
 .draggingAgendaItem {
   opacity: 0.94;
   transform: scale(1.02);
-  box-shadow: 0 18px 36px rgba(243, 107, 0, 0.22);
+  box-shadow: 0 18px 36px rgb(var(--accent-rgb) / 0.22);
   z-index: 2;
   cursor: grabbing;
 }
@@ -756,7 +756,7 @@
 
 .activeInsertionLine {
   border-top-width: 4px;
-  border-top-color: #f36b00;
+  border-top-color: var(--accent);
   margin: 8px 10px;
   opacity: 1;
 }
@@ -844,9 +844,9 @@
 }
 
 .activeIconPill {
-  border-color: rgba(243, 107, 0, 0.5);
+  border-color: rgb(var(--accent-rgb) / 0.5);
   color: #fff;
-  background: rgba(243, 107, 0, 0.18);
+  background: rgb(var(--accent-rgb) / 0.18);
 }
 
 .planListRow {
@@ -862,8 +862,8 @@
 }
 
 .planSchedulerCard {
-  border-color: rgba(243, 107, 0, 0.32);
-  background: linear-gradient(145deg, rgba(243, 107, 0, 0.1), rgba(243, 107, 0, 0.02) 52%), var(--panel);
+  border-color: rgb(var(--accent-rgb) / 0.32);
+  background: linear-gradient(145deg, rgb(var(--accent-rgb) / 0.1), rgb(var(--accent-rgb) / 0.02) 52%), var(--panel);
 }
 
 .planSchedulerFields {
@@ -911,7 +911,7 @@
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(16, 24, 40, 0.042);
 }
 
 .schedulePreviewSummary {
@@ -947,15 +947,15 @@
 
 .scheduleConflictWarning {
   padding: 12px;
-  border: 1px solid rgba(231, 128, 109, 0.46);
+  border: 1px solid rgb(var(--danger-rgb) / 0.3);
   border-radius: 14px;
-  background: rgba(166, 57, 39, 0.13);
-  color: #ffd0c7;
+  background: rgb(var(--danger-rgb) / 0.07);
+  color: var(--danger);
 }
 
 .scheduleConflictWarning p {
   margin-top: 4px;
-  color: #efb4a9;
+  color: var(--danger);
   font-size: 0.82rem;
 }
 
@@ -964,7 +964,7 @@
 .planDayCard,
 .planExerciseCard {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, rgb(var(--ink-rgb) / 0.018), rgb(var(--ink-rgb) / 0.0)),
     var(--panel);
 }
 
@@ -996,7 +996,7 @@
   align-items: baseline;
   gap: 12px;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgb(var(--ink-rgb) / 0.03);
 }
 
 .importDayItemRow:last-child {
@@ -1019,13 +1019,13 @@
   width: 100%;
   height: 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgb(var(--ink-rgb) / 0.048);
   overflow: hidden;
 }
 
 .progressFill {
   height: 100%;
-  background: linear-gradient(90deg, #ff8d1d 0%, #f36b00 100%);
+  background: var(--accent);
   border-radius: 999px;
 }
 
@@ -1058,7 +1058,7 @@
 .trendBar {
   width: 24px;
   border-radius: 999px 999px 6px 6px;
-  background: linear-gradient(180deg, #ff8d1d 0%, #f36b00 100%);
+  background: var(--accent);
 }
 
 .settingsNavItem {
@@ -1171,7 +1171,7 @@
   border: 1px solid var(--border);
   border-radius: 20px;
   background:
-    linear-gradient(180deg, rgba(243, 107, 0, 0.055), rgba(243, 107, 0, 0)),
+    linear-gradient(180deg, rgb(var(--accent-rgb) / 0.055), rgb(var(--accent-rgb) / 0)),
     var(--surface);
 }
 
@@ -1194,7 +1194,7 @@
 
 .sourceBadge {
   padding: 5px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgb(var(--ink-rgb) / 0.06);
   border-radius: 999px;
   color: var(--text-muted);
   font-size: 0.72rem;
@@ -1253,7 +1253,7 @@
 
 .syncHealthButton {
   min-height: 44px;
-  border-color: rgba(243, 107, 0, 0.36);
+  border-color: rgb(var(--accent-rgb) / 0.36);
 }
 
 .syncStatusSummary {
@@ -1274,7 +1274,7 @@
 
 .syncStatusSummary .syncWarning {
   margin-top: 5px;
-  color: #f2b36b;
+  color: var(--warn);
 }
 
 .settingsSyncStatus {
@@ -1292,13 +1292,13 @@
   gap: 5px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-left: 4px solid #72b88b;
+  border-left: 4px solid var(--success);
   border-radius: 12px;
   background: var(--surface);
 }
 
 .aiDiagnosticItem.failed {
-  border-left-color: #ef7777;
+  border-left-color: var(--danger);
 }
 
 .aiDiagnosticItem p,
@@ -1323,15 +1323,15 @@
 }
 
 .coachReviewCard {
-  --coach-text: #ebe8e1;
-  --coach-muted: #b9b6ae;
+  --coach-text: var(--text-strong);
+  --coach-muted: var(--text-muted);
   display: flex;
   flex-direction: column;
   gap: 18px;
   padding: 22px;
-  border: 1px solid rgba(243, 107, 0, 0.28);
+  border: 1px solid rgb(var(--accent-rgb) / 0.28);
   border-radius: 22px;
-  background: linear-gradient(145deg, rgba(243, 107, 0, 0.11), rgba(243, 107, 0, 0.025) 46%), var(--surface);
+  background: linear-gradient(145deg, rgb(var(--accent-rgb) / 0.11), rgb(var(--accent-rgb) / 0.025) 46%), var(--surface);
   color: var(--coach-text);
   font-family: "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 }
@@ -1395,7 +1395,7 @@
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(16, 24, 40, 0.042);
 }
 
 .coachActions ul {
@@ -1423,7 +1423,7 @@
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(16, 24, 40, 0.042);
 }
 
 .coachRecommendationHeading,
@@ -1438,7 +1438,7 @@
 .recommendationStatus {
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
+  background: rgb(var(--ink-rgb) / 0.042);
   color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 800;
@@ -1492,12 +1492,12 @@
   max-width: 92%;
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--ink-rgb) / 0.036);
 }
 
 .coachMessage.user {
   align-self: flex-end;
-  background: rgba(243, 107, 0, 0.14);
+  background: rgb(var(--accent-rgb) / 0.14);
 }
 
 .coachMessage span {
@@ -1527,13 +1527,13 @@
 }
 
 .programCoachPanel {
-  --coach-text: #ebe8e1;
-  --coach-muted: #b9b6ae;
+  --coach-text: var(--text-strong);
+  --coach-muted: var(--text-muted);
   display: flex;
   flex-direction: column;
   gap: 18px;
-  border-color: rgba(243, 107, 0, 0.25);
-  background: linear-gradient(150deg, rgba(243, 107, 0, 0.08), transparent 42%), var(--panel);
+  border-color: rgb(var(--accent-rgb) / 0.25);
+  background: linear-gradient(150deg, rgb(var(--accent-rgb) / 0.08), transparent 42%), var(--panel);
   color: var(--coach-text);
   font-family: "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 }
@@ -1572,7 +1572,7 @@
   padding: 15px;
   border: 1px solid var(--border);
   border-radius: 17px;
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(16, 24, 40, 0.042);
 }
 
 .programCoachContextLine {
@@ -1610,15 +1610,15 @@
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgb(var(--ink-rgb) / 0.024);
   color: var(--text-strong);
   font: inherit;
   text-align: left;
 }
 
 .starterPrompt:hover {
-  border-color: rgba(243, 107, 0, 0.45);
-  background: rgba(243, 107, 0, 0.08);
+  border-color: rgb(var(--accent-rgb) / 0.45);
+  background: rgb(var(--accent-rgb) / 0.08);
 }
 
 .programCoachComposer {
@@ -1659,7 +1659,7 @@
 .miniAction {
   padding: 6px 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgb(var(--ink-rgb) / 0.03);
   color: var(--text-strong);
   border-radius: 999px;
   font: inherit;
@@ -1670,7 +1670,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(7, 8, 12, 0.72);
+  background: rgba(28, 33, 38, 0.36);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1697,7 +1697,7 @@
 }
 
 .toast {
-  background: #f36b00;
+  background: var(--accent);
   color: white;
   padding: 10px 12px;
   border-radius: 12px;
@@ -1714,12 +1714,12 @@
   padding: 3px;
   background: transparent;
   border-width: 1.5px;
-  border-color: rgba(243, 107, 0, 0.7);
+  border-color: rgb(var(--accent-rgb) / 0.7);
   flex: 0 0 auto;
 }
 
 .ring.habitRing {
-  border-color: rgba(62, 179, 139, 0.78);
+  border-color: rgb(var(--accent-rgb) / 0.78);
 }
 
 .ring span {
@@ -1730,18 +1730,18 @@
 }
 
 .ring.done span {
-  background: linear-gradient(180deg, #ff8d1d 0%, #f36b00 100%);
+  background: var(--accent);
 }
 
 .ring.habitRing.done span {
-  background: linear-gradient(180deg, #57d5b0 0%, #1e9f7b 100%);
+  background: var(--accent);
 }
 
 .ref,
 .mini {
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgb(var(--ink-rgb) / 0.03);
 }
 
 .mini strong {
@@ -1787,9 +1787,9 @@
   align-items: center;
   padding: 0.28rem 0.55rem;
   border-radius: 999px;
-  background: rgba(62, 179, 139, 0.14);
-  border: 1px solid rgba(62, 179, 139, 0.34);
-  color: #8de5cc;
+  background: rgb(var(--accent-rgb) / 0.14);
+  border: 1px solid rgb(var(--accent-rgb) / 0.34);
+  color: var(--accent-strong);
   font-size: 0.74rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -1918,9 +1918,9 @@
 }
 
 .workoutItem {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(var(--ink-rgb) / 0.048);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgb(var(--ink-rgb) / 0.015);
   overflow: hidden;
 }
 
@@ -1967,17 +1967,17 @@
 .logButton {
   min-width: 70px;
   padding: 0.68rem 0.82rem;
-  border: 1px solid rgba(243, 107, 0, 0.55);
+  border: 1px solid rgb(var(--accent-rgb) / 0.55);
   border-radius: 999px;
-  background: rgba(243, 107, 0, 0.13);
-  color: #ffb067;
+  background: rgb(var(--accent-rgb) / 0.13);
+  color: var(--accent-strong);
   font: inherit;
   font-weight: 700;
 }
 
 .doneLogButton {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: rgb(var(--ink-rgb) / 0.072);
+  background: rgb(var(--ink-rgb) / 0.03);
   color: var(--text-muted);
 }
 
@@ -1986,8 +1986,8 @@
   flex-direction: column;
   gap: 12px;
   padding: 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(0, 0, 0, 0.14);
+  border-top: 1px solid rgb(var(--ink-rgb) / 0.042);
+  background: rgba(16, 24, 40, 0.049);
 }
 
 .loggerHeading,
@@ -2018,7 +2018,7 @@
 }
 
 .dangerTextButton {
-  color: #ff9d85;
+  color: var(--danger);
 }
 
 .secondaryTools {
@@ -2049,7 +2049,7 @@
 }
 
 .dayOptions {
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid rgb(var(--ink-rgb) / 0.042);
 }
 
 .targetEditRow {
@@ -2062,7 +2062,7 @@
   gap: 16px;
   padding: 18px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgb(var(--ink-rgb) / 0.015);
 }
 
 .restState p {
@@ -2077,7 +2077,7 @@
   height: 42px;
   flex: 0 0 42px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--ink-rgb) / 0.036);
   color: var(--accent-soft);
   font-size: 1.35rem;
 }
@@ -2105,7 +2105,7 @@
 .compactMenu[open] {
   padding: 8px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.035);
+  background: rgb(var(--ink-rgb) / 0.021);
 }
 
 .compactLibraryList {
@@ -2138,7 +2138,7 @@
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 12px;
   padding: 13px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgb(var(--ink-rgb) / 0.036);
 }
 
 .planOverviewDay:last-child {
@@ -2157,7 +2157,7 @@
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: rgba(243, 107, 0, 0.11);
+  background: rgb(var(--accent-rgb) / 0.11);
   color: var(--accent-soft);
   font-weight: 700;
 }
@@ -2187,7 +2187,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid rgba(243, 107, 0, 0.8);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.8);
   outline-offset: 2px;
 }
 
@@ -2655,7 +2655,7 @@ textarea:focus-visible {
   width: 100%;
   min-height: 48px;
   padding: 10px 14px;
-  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border: 1px dashed rgb(var(--ink-rgb) / 0.096);
   border-radius: 16px;
   background: transparent;
   color: var(--text-muted);
@@ -2801,7 +2801,7 @@ textarea:focus-visible {
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgb(var(--ink-rgb) / 0.015);
 }
 
 .sheetGroup > .field {
@@ -2876,7 +2876,7 @@ textarea:focus-visible {
 
 .toastAction {
   padding: 4px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  border: 1px solid rgb(var(--ink-rgb) / 0.36);
   border-radius: 999px;
   background: transparent;
   color: white;

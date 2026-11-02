@@ -1,111 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AiDiagnostic, User } from './lib/cloudflare'
 import './App.css'
+import './theme.css'
 import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, loadScheduleRevision, savePlanSnapshot, saveScheduleChanges, saveScheduleSnapshot, supabase, supabaseUrl } from './lib/cloudflare'
 import { diffScheduleRows, fingerprintScheduleRows, habitStats, isDueOn, pinItemsToDates, scheduleChangeCount, swapScheduleDates } from './lib/schedule'
 import type { ScheduleRowFingerprint, ScheduleRowSet } from './lib/schedule'
+import type { Sex } from './lib/standards'
+import { d, key, add, dateOrdinal, monthKey, fmtDay, fmtShort, fmtMonth, fmtDateRange, fmtSecs, parseSecs, countUnitLabel, totalCount, loggedWeight, loggedReps, weightLabel, durationShort, workoutSummary } from './lib/format'
+import { numberInputValue, parseNumberInput } from './lib/format'
+import { Sheet } from './components/Sheet'
+import { WeekStrip, type WeekDayStatus } from './components/WeekStrip'
+import { PowerBlockBadge } from './components/PowerBlockBadge'
+import { ProgressScreen } from './screens/ProgressScreen'
+import { TargetEditor } from './components/TargetEditor'
+import { TrashIcon } from './components/icons'
+import type { TK, TT, RM, PM, EffortRating, DaySection, Target, Result, Exercise, Item, Day, PlanDay, Plan, RunStatus, Run, Log, LegacyHist, LegacyItem, LegacyState, State, ExerciseForm, PlanForm, PlanScheduleMode, PlanTargetMode, PlanCyclePreview, PlanSchedulePreview, RemovedItem, UndoActions, Toast, ScheduleSaveStatus, ItemDraft, DailyHealthDraft, MobilePairing, MobileSyncStatus, ExerciseRecommendation, DailyReview, CoachMessage, ProgramCoachMessage, WorkbookPreview, ImportedAnalysisItem, ImportedAnalysisDay, ImportedPlanAnalysis, ExerciseEditorMode, ScheduleTouchDrag, ScheduleMoveTarget, ConfirmState } from './types'
 
-type TK = 'exercise' | 'habit'
-type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
-type RM = 'last-result' | 'personal-best'
-type PM = 'count' | 'time' | 'weight'
-type EffortRating = 'easy' | 'moderate' | 'hard' | 'limit'
-type DaySection = 'habits' | 'workout' | 'health' | 'coach'
-type CountUnit = 'reps' | 'steps'
-type Target = { count?: number; countUnit?: CountUnit; sets?: number; reps?: number; seconds?: number; distance?: number; unit?: 'mi' | 'km'; weight?: number }
-type SetResult = { reps: number; weight?: number }
-type Result = { seconds?: number; timeText?: string; weight?: number; count?: number; sets?: SetResult[]; difficulty?: EffortRating; note?: string }
-type Exercise = { id: string; kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM; repeatDays?: number[] }
-type Item = { id: string; exerciseId: string; type: TT; target: Target; ref: RM; done: boolean; result: Result }
-type Day = { date: string; notes: string; rest: boolean; skipped: boolean; runId?: string; dayNo?: number; items: Item[] }
-type PlanDay = { id: string; label: string; rest: boolean; notes?: string; items: Array<{ id: string; exerciseId: string; type: TT; target: Target; ref: RM }> }
-type Plan = { id: string; name: string; focus: string; days: PlanDay[] }
-type RunStatus = 'active' | 'completed'
-type Run = { id: string; planId: string; startDate: string; name: string; status: RunStatus; completedAt?: string }
-type Log = { id: string; sourceItemId?: string; exerciseId: string; date: string; type: TT; target: Target; result: Result; done: true }
-type LegacyHist = { id: string; exerciseId: string; date: string; type: TT; target: Target; actualSeconds?: number; actualWeight?: number; actualCount?: number; done: boolean }
-type LegacyItem = Omit<Item, 'result'> & { result?: Result; actualSeconds?: number; actualTimeText?: string; actualWeight?: number; actualCount?: number; note?: string }
-type LegacyRun = Omit<Run, 'status' | 'completedAt'> & { status?: RunStatus; completedAt?: string }
-type LegacyState = { exercises?: Exercise[]; schedule?: Array<Omit<Day, 'items'> & { items: LegacyItem[] }>; plans?: Plan[]; runs?: LegacyRun[]; history?: LegacyHist[]; logs?: Log[] }
-type State = { exercises: Exercise[]; schedule: Day[]; plans: Plan[]; runs: Run[]; logs: Log[] }
-type ExerciseForm = { kind: TK; name: string; category: string; equipment: string; notes: string; defaultType: TT; allowed: TT[]; target: Target; refs: RM[]; progressMetric: PM; repeatDays: number[] }
-type PlanForm = { name: string; focus: string }
-type PlanScheduleMode = 'cycles' | 'end-date'
-type PlanTargetMode = 'latest' | 'template'
-type PlanCyclePreview = { cycleNumber: number; startDate: string; endDate: string; days: Array<{ date: string; dayNo: number; planDay: PlanDay }> }
-type PlanSchedulePreview = { cycles: PlanCyclePreview[]; dates: string[]; conflicts: string[]; startDate: string; endDate: string; totalDays: number; error: string }
-type RemovedItem = { item: Item; index: number; log?: Log }
-type UndoActions = {
-  restoreItem: (date: string, removed: RemovedItem) => Promise<unknown>
-  putItem: (date: string, item: Item) => Promise<unknown>
-  removeItem: (date: string, itemId: string) => Promise<unknown>
-  swapDays: (sourceDate: string, targetDate: string, quiet?: boolean) => Promise<unknown>
-}
-type Toast = { id: string; message: string; createdAt: number; action?: { label: string; run: () => void } }
-type ScheduleSaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
-type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
-type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
-type MobilePairing = { code: string; expiresAt: string; syncUrl: string }
-type MobileSyncStatus = {
-  id: string
-  name: string
-  app_version: string | null
-  last_used_at: string | null
-  last_sync_attempt_at: string | null
-  last_sync_success_at: string | null
-  last_sync_status: string | null
-  last_sync_error: string | null
-  background_permission: boolean
-  last_sync_trigger: string | null
-}
-type RecommendationPlanAction = {
-  status: 'pending' | 'applied' | 'dismissed' | 'no_change' | 'unavailable'
-  can_apply: boolean
-  message: string
-  next_date?: string | null
-  schedule_item_id?: string | null
-  current_type?: TT | null
-  current_target?: Target | null
-  proposed_type?: TT | null
-  proposed_target?: Target | null
-}
-type ExerciseRecommendation = { exercise_id?: string; exercise: string; recommendation: string; reason: string; plan_action?: RecommendationPlanAction }
-type DailyReview = {
-  id: string
-  date: string
-  model: string
-  headline: string
-  overall: string
-  training: string
-  nutrition: string
-  trends: string
-  tomorrow: string
-  action_items: string[]
-  exercise_recommendations: ExerciseRecommendation[]
-}
-type CoachMessage = { id: string; role: 'user' | 'assistant'; content: string; created_at: string }
-type ProgramCoachMessage = CoachMessage & { lookback_days?: number }
-type WorkbookPreview = { fileName: string; sheets: Array<{ name: string; rows: string[][] }> }
-type ImportedAnalysisItem = { name: string; kind: TK; category: string; notes: string; defaultType: TT; progressMetric: PM; usedOnDays: string[] }
-type ImportedAnalysisDay = { label: string; notes: string; items: Array<{ name: string; type: TT; target: Target; ref: RM; note: string }> }
-type ImportedPlanAnalysis = { summary: string; warnings: string[]; items: ImportedAnalysisItem[]; days: ImportedAnalysisDay[] }
-type ExerciseEditorMode = 'existing' | 'new'
-type ScheduleTouchDrag = { sourceDate: string; active: boolean; pointerId?: number; startX: number; startY: number }
-type ScheduleMoveTarget = { date: string; placement: 'before' | 'after' }
-type ConfirmState =
-  | { kind: 'delete-run'; runId: string; title: string; body: string }
-  | { kind: 'delete-plan'; planId: string; title: string; body: string }
-  | { kind: 'delete-exercise'; exerciseId: string; title: string; body: string }
-  | { kind: 'import-data'; title: string; body: string }
-  | { kind: 'reset-all-data'; title: string; body: string }
-  | { kind: 'reset-schedule-data'; title: string; body: string }
-  | { kind: 'reset-progress-data'; title: string; body: string }
-  | { kind: 'revoke-mobile-sync'; title: string; body: string }
-  | null
+type CoachProfile = { birthYear: number | null; sex: Sex | null; heightInches: number | null; powerblockColors: boolean }
+type ProfileDraft = { birthYear: string; sex: '' | Sex; heightFeet: string; heightInches: string; powerblockColors: boolean }
+const EMPTY_COACH_PROFILE: CoachProfile = { birthYear: null, sex: null, heightInches: null, powerblockColors: true }
+const profileDraftFrom = (profile: CoachProfile): ProfileDraft => ({
+  birthYear: profile.birthYear ? String(profile.birthYear) : '',
+  sex: profile.sex ?? '',
+  heightFeet: profile.heightInches ? String(Math.floor(profile.heightInches / 12)) : '',
+  heightInches: profile.heightInches ? String(Math.round(profile.heightInches % 12)) : '',
+  powerblockColors: profile.powerblockColors,
+})
 
 const KEY = 'fitness-tracker-v1'
 const HEALTH_SYNC_DATE_KEY = 'discipline-plus-health-sync-date'
-const APP_TABS = ['schedule', 'coach', 'exercises', 'plans', 'progress', 'settings'] as const
+const APP_TABS = ['schedule', 'progress', 'plans', 'calendar', 'exercises', 'coach', 'settings'] as const
+const PLAN_TABS = ['plans', 'calendar', 'exercises'] as const
 type AppTab = typeof APP_TABS[number]
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const EXERCISE_CATEGORY_OPTIONS = ['Bodyweight', 'Dumbbell']
@@ -115,46 +40,9 @@ const TT_LABEL: Record<TT, string> = { count: 'Count', sets: 'Sets x reps', dura
 const RM_LABEL: Record<RM, string> = { 'last-result': 'Last result', 'personal-best': 'Personal best' }
 const PM_LABEL: Record<PM, string> = { count: 'Count', time: 'Time', weight: 'Weight' }
 const id = (p: string) => `${p}-${crypto.randomUUID()}`
-const d = (k: string) => new Date(`${k}T12:00:00`)
-const key = (dt: Date) => `${dt.getFullYear()}-${`${dt.getMonth() + 1}`.padStart(2, '0')}-${`${dt.getDate()}`.padStart(2, '0')}`
-const add = (k: string, n: number) => { const x = d(k); x.setDate(x.getDate() + n); return key(x) }
-const dateOrdinal = (date: string) => Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10))) / 86400000
-const monthKey = (k: string) => `${k.slice(0, 7)}-01`
-const fmtDay = (k: string) => d(k).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
-const fmtShort = (k: string) => d(k).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-const fmtMonth = (k: string) => d(k).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
-const fmtDateRange = (start: string, end: string) => start === end ? fmtShort(start) : `${fmtShort(start)}–${fmtShort(end)}`
-const fmtSecs = (s?: number) => !s ? '--:--' : `${Math.floor(s / 60)}:${`${s % 60}`.padStart(2, '0')}`
-const parseSecs = (v: string) => { if (!v.trim()) return undefined; if (v.includes(':')) { const [m, s] = v.split(':').map(Number); return Number.isNaN(m) || Number.isNaN(s) ? undefined : m * 60 + s } const n = Number(v); return Number.isNaN(n) ? undefined : n * 60 }
 const blank = (t: TT): Target => t === 'count' ? { count: 25, countUnit: 'reps' } : t === 'sets' ? { sets: 4, reps: 10 } : t === 'duration' ? { seconds: 60 } : t === 'distance' ? { distance: 2, unit: 'mi' } : t === 'for-time' ? { count: 100 } : { sets: 4, reps: 8, weight: 30 }
 const clone = (t: Target) => ({ ...t })
-const countUnitLabel = (target: Target) => target.countUnit === 'steps' ? 'steps' : 'reps'
 const sum = (t: TT, x: Target) => t === 'count' ? `${x.count ?? 0} ${countUnitLabel(x)}` : t === 'sets' ? `${x.sets ?? 0} x ${x.reps ?? 0}` : t === 'duration' ? durationShort(x.seconds) : t === 'distance' ? `${x.distance ?? 0} ${x.unit ?? 'mi'}` : t === 'for-time' ? `${x.count ?? 0} count for time` : `${x.sets ?? 0} x ${x.reps ?? 0} @ ${x.weight ?? 0} lb`
-const totalCount = (target: Target) => target.count ?? ((target.sets ?? 0) * (target.reps ?? 0))
-const loggedWeight = (entry: Pick<Log, 'target' | 'result'>) => {
-  if (entry.result.weight !== undefined) return entry.result.weight
-  const setWeights = (entry.result.sets ?? []).map((set) => set.weight).filter((weight): weight is number => weight !== undefined)
-  return setWeights.length ? Math.max(...setWeights) : entry.target.weight
-}
-const loggedReps = (entry: Pick<Log, 'target' | 'result'>) => {
-  const sets = (entry.result.sets ?? []).filter((set) => Number.isFinite(set.reps) && set.reps > 0)
-  if (sets.length) return sets.reduce((total, set) => total + set.reps, 0)
-  return entry.target.sets !== undefined && entry.target.reps !== undefined ? entry.target.sets * entry.target.reps : 0
-}
-const loggedSetsLabel = (entry: Pick<Log, 'target' | 'result'>) => {
-  const sets = (entry.result.sets ?? []).filter((set) => Number.isFinite(set.reps) && set.reps > 0)
-  if (sets.length) {
-    const reps = sets.map((set) => set.reps)
-    return reps.every((rep) => rep === reps[0]) ? `${reps.length}x${reps[0]}` : reps.join('/')
-  }
-  return entry.target.sets && entry.target.reps ? `${entry.target.sets}x${entry.target.reps}` : ''
-}
-const weightLabel = (entry: Pick<Log, 'target' | 'result'>) => {
-  const weight = loggedWeight(entry)
-  if (weight === undefined) return ''
-  const sets = loggedSetsLabel(entry)
-  return sets ? `${weight} lb / ${sets}` : `${weight} lb`
-}
 const metric = (progressMetric: PM, entry: Pick<Log, 'target' | 'result'>) => progressMetric === 'count' ? entry.result.count ?? totalCount(entry.target) : progressMetric === 'time' ? entry.result.seconds ?? entry.target.seconds : loggedWeight(entry)
 // True when `candidate` beats `current` for the progress metric. Weight ties go to the entry with more total reps.
 const beats = (progressMetric: PM, candidate: Pick<Log, 'target' | 'result'>, current: Pick<Log, 'target' | 'result'>) => {
@@ -164,17 +52,6 @@ const beats = (progressMetric: PM, candidate: Pick<Log, 'target' | 'result'>, cu
   if (progressMetric === 'time') return b < a
   if (b !== a) return b > a
   return progressMetric === 'weight' && loggedReps(candidate) > loggedReps(current)
-}
-const durationShort = (seconds?: number) => seconds === undefined ? '0:00' : `${Math.floor(seconds / 60)}:${`${seconds % 60}`.padStart(2, '0')}`
-const workoutSummary = (t: TT, x: Target) => {
-  if (t === 'sets' || t === 'weighted') {
-    const volume = `${x.sets ?? 0} × ${x.reps ?? 0}`
-    return x.weight !== undefined ? `${volume} · ${x.weight} lb` : volume
-  }
-  if (t === 'count') return `${x.count ?? 0} ${countUnitLabel(x)}`
-  if (t === 'duration') return durationShort(x.seconds)
-  if (t === 'distance') return `${x.distance ?? 0} ${x.unit ?? 'mi'}`
-  return `${x.count ?? 0} reps for time`
 }
 const resultSetSummary = (result: Result) => {
   if (!result.sets?.length) return ''
@@ -219,8 +96,6 @@ const COACHING_NOTE_SEEDS = [
 ] as const
 const safeImportedType = (kind: TK, type: TT): TT => sanitizeExerciseDefaultType(kind, type)
 const allowedTypesFromImportedItems = (kind: TK, itemTypes: TT[], defaultType: TT) => sanitizeAllowedTypes(kind, itemTypes.map((type) => safeImportedType(kind, type)), defaultType)
-const parseNumberInput = (value: string) => value.trim() === '' ? undefined : Number(value)
-const numberInputValue = (value?: number) => value ?? ''
 const emptyDailyHealthDraft = (): DailyHealthDraft => ({ calories: '', protein: '', carbs: '', fat: '', steps: '', weight: '' })
 const wholeNumberText = (value: number | null | undefined) => value === null || value === undefined ? '' : String(Math.round(value))
 const parseOptionalNumber = (value: string) => {
@@ -702,18 +577,6 @@ function referenceSummary(history: Log[], exercise: Exercise, mode: RM, type: TT
   return value !== undefined ? `${value}` : 'none'
 }
 
-function metricDisplay(progressMetric: PM, entry: Log) {
-  if (progressMetric === 'time') {
-    const value = entry.result.seconds ?? entry.target.seconds
-    return value !== undefined ? fmtSecs(value) : '--:--'
-  }
-  if (progressMetric === 'weight') {
-    return weightLabel(entry) || '--'
-  }
-  const value = entry.result.count ?? totalCount(entry.target)
-  return value !== undefined ? `${value}` : '--'
-}
-
 function bestProgressEntry(history: Log[], exercise: Exercise) {
   if (!history.length) return undefined
   const progressMetric = effectiveProgressMetric(exercise, history[0].type)
@@ -803,17 +666,6 @@ function effectiveProgressMetric(exercise: Exercise, type: TT): PM {
     return 'weight'
   }
   return exercise.progressMetric
-}
-
-function defaultResultForLog(log: Log, exercise: Exercise): Result {
-  const progressMetric = effectiveProgressMetric(exercise, log.type)
-  if (progressMetric === 'time') {
-    return { ...log.result, timeText: log.result.timeText ?? (log.result.seconds !== undefined ? fmtSecs(log.result.seconds) : '') }
-  }
-  if (progressMetric === 'weight') {
-    return { ...log.result, weight: log.result.weight ?? log.target.weight ?? 0 }
-  }
-  return { ...log.result, count: log.result.count ?? totalCount(log.target) }
 }
 
 function makeItemDraft(item: Item, exercise: Exercise): ItemDraft {
@@ -1130,7 +982,6 @@ export default function App() {
   const [selected, setSelected] = useState(today)
   const [month, setMonth] = useState(monthKey(today))
   const [scheduleView, setScheduleView] = useState<'calendar' | 'list'>('list')
-  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [visibleListCount, setVisibleListCount] = useState(5)
   const [showPastDays, setShowPastDays] = useState(false)
   const [shift, setShift] = useState<number | undefined>(1)
@@ -1140,9 +991,6 @@ export default function App() {
   const [exerciseForm, setExerciseForm] = useState<ExerciseForm>(() => state.exercises[0] ? formFromExercise(state.exercises[0]) : emptyExerciseForm())
   const [libraryFilter, setLibraryFilter] = useState<TK>('exercise')
   const [libraryQuery, setLibraryQuery] = useState('')
-  const [selectedProgressExerciseId, setSelectedProgressExerciseId] = useState<string | null>(state.exercises[0]?.id ?? null)
-  const [editingLogId, setEditingLogId] = useState<string | null>(null)
-  const [progressEdit, setProgressEdit] = useState<Result>({})
   const [pendingImport, setPendingImport] = useState<LegacyState | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [planEditing, setPlanEditing] = useState(false)
@@ -1150,10 +998,14 @@ export default function App() {
   const [importAnalysis, setImportAnalysis] = useState<ImportedPlanAnalysis | null>(null)
   const [importWorkbook, setImportWorkbook] = useState<WorkbookPreview | null>(null)
   const [importBusy, setImportBusy] = useState(false)
-  const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('data')
+  const [settingsSection, setSettingsSection] = useState<'data' | 'integrations' | 'profile'>('profile')
   const [mobilePairing, setMobilePairing] = useState<MobilePairing | null>(null)
   const [mobilePairingLoading, setMobilePairingLoading] = useState(false)
   const [mobileSyncStatus, setMobileSyncStatus] = useState<MobileSyncStatus | null>(null)
+  const [coachProfile, setCoachProfile] = useState<CoachProfile>(EMPTY_COACH_PROFILE)
+  const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => profileDraftFrom(EMPTY_COACH_PROFILE))
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [bodyweights, setBodyweights] = useState<Array<{ date: string; weight: number }>>([])
   const [mobileSyncStatusLoading, setMobileSyncStatusLoading] = useState(false)
   const [aiDiagnostics, setAiDiagnostics] = useState<AiDiagnostic[]>([])
   const [aiDiagnosticsLoading, setAiDiagnosticsLoading] = useState(false)
@@ -1192,13 +1044,14 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [daySheet, setDaySheet] = useState<null | { mode: 'add'; kind: TK } | { mode: 'actions' }>(null)
   const [pickerQuery, setPickerQuery] = useState('')
+  const [libraryEditorOpen, setLibraryEditorOpen] = useState(false)
   const [scheduleSaveStatus, setScheduleSaveStatus] = useState<ScheduleSaveStatus>('idle')
   const [confirmState, setConfirmState] = useState<ConfirmState>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const planImportInputRef = useRef<HTMLInputElement | null>(null)
   const dayDetailRef = useRef<HTMLElement | null>(null)
   const daySectionsDateRef = useRef('')
-  const exerciseDetailRef = useRef<HTMLElement | null>(null)
+  const exerciseDetailRef = useRef<HTMLDivElement | null>(null)
   const planDetailRef = useRef<HTMLElement | null>(null)
   const localScheduleRef = useRef({ schedule: state.schedule, runs: state.runs, logs: state.logs })
   const authUserRef = useRef<string | null>(null)
@@ -1270,13 +1123,11 @@ export default function App() {
       setSelectedExerciseId(next.exercises[0]?.id ?? null)
       setExerciseEditorMode(next.exercises[0] ? 'existing' : 'new')
       setExerciseForm(next.exercises[0] ? formFromExercise(next.exercises[0]) : emptyExerciseForm())
-      setSelectedProgressExerciseId(next.exercises[0]?.id ?? null)
       const nextPlan = next.plans[0]
       setSelectedPlanId(nextPlan?.id ?? null)
       setPlanForm(nextPlan ? formFromPlan(nextPlan) : emptyPlanForm())
       setApplyPlanId(null)
       setApplyStartDate(nextToday)
-      cancelLogEdit()
     }
     supabase.auth.getSession().then(async ({ data }) => {
       if (!active) return
@@ -1310,6 +1161,45 @@ export default function App() {
       authListener.subscription.unsubscribe()
     }
   }, [])
+  useEffect(() => {
+    if (!supabase || !user) {
+      setCoachProfile(EMPTY_COACH_PROFILE)
+      return
+    }
+    let active = true
+    const client = supabase
+    const loadCoachProfile = async () => {
+      let { data, error } = await client.from('coaching_profiles').select('birth_year, sex, height_inches, powerblock_colors').eq('user_id', user.id)
+      // Before the API knows the new profile columns, fall back to what it has.
+      if (error) ({ data, error } = await client.from('coaching_profiles').select('height_inches').eq('user_id', user.id))
+      if (!active || error) return
+      const row = (data?.[0] ?? {}) as { birth_year?: number | null; sex?: string | null; height_inches?: number | null; powerblock_colors?: boolean | null }
+      const next: CoachProfile = {
+        birthYear: typeof row.birth_year === 'number' ? row.birth_year : null,
+        sex: row.sex === 'male' || row.sex === 'female' ? row.sex : null,
+        heightInches: typeof row.height_inches === 'number' ? row.height_inches : null,
+        powerblockColors: row.powerblock_colors !== false,
+      }
+      setCoachProfile(next)
+      setProfileDraft(profileDraftFrom(next))
+    }
+    void loadCoachProfile()
+    return () => { active = false }
+  }, [user])
+  useEffect(() => {
+    if (!supabase || !user || tab !== 'progress') return
+    let active = true
+    const client = supabase
+    void client.from('body_weight_entries').select('local_date, weight_lb').eq('user_id', user.id).order('local_date', { ascending: true }).then(({ data, error }) => {
+      if (!active || error || !data) return
+      const byDate = new Map<string, number>()
+      for (const row of data as Array<{ local_date: string; weight_lb: number }>) {
+        if (typeof row.weight_lb === 'number') byDate.set(row.local_date, row.weight_lb)
+      }
+      setBodyweights([...byDate.entries()].map(([date, weight]) => ({ date, weight })))
+    })
+    return () => { active = false }
+  }, [tab, user])
   useEffect(() => {
     if (!supabase || !user) {
       setDailyHealthDraft(emptyDailyHealthDraft())
@@ -1388,13 +1278,15 @@ export default function App() {
     return () => { active = false }
   }, [settingsSection, tab, user])
   useEffect(() => {
-    if (daySectionsDateRef.current === selected) return
-    daySectionsDateRef.current = selected
     const selectedDay = localScheduleRef.current.schedule.find((entry) => entry.date === selected)
     const habitIds = new Set(state.exercises.filter((exercise) => exercise.kind === 'habit').map((exercise) => exercise.id))
     const workout = selectedDay?.items.filter((item) => !habitIds.has(item.exerciseId)) ?? []
+    // Decide once per day, but decide again when that day's workout first loads.
+    const sectionKey = `${selected}:${workout.length > 0}`
+    if (daySectionsDateRef.current === sectionKey) return
+    daySectionsDateRef.current = sectionKey
     const complete = workout.length > 0 && workout.every((item) => item.done)
-    setOpenDaySections({ habits: true, workout: !complete && workout.length > 0, health: complete || workout.length === 0, coach: false })
+    setOpenDaySections({ habits: true, workout: !complete, health: complete || workout.length === 0, coach: false })
   }, [selected, state.schedule, state.exercises])
   useEffect(() => {
     if (!user) {
@@ -1510,10 +1402,6 @@ export default function App() {
     }
     return byHabit
   }, [state.logs])
-  const progressExercises = useMemo(() => {
-    const completedIds = new Set(state.logs.filter((entry) => entry.done).map((entry) => entry.exerciseId))
-    return sortedExercises.filter((exercise) => completedIds.has(exercise.id))
-  }, [sortedExercises, state.logs])
   const importedItemMatches = useMemo(() => {
     if (!importAnalysis) return []
     return importAnalysis.items
@@ -1524,9 +1412,6 @@ export default function App() {
         existing: catalogMatchesByNormalizedName.get(normalizeCatalogName(item.name)) ?? null,
       }))
   }, [catalogMatchesByNormalizedName, importAnalysis])
-  useEffect(() => {
-    setSelectedProgressExerciseId((current) => current && progressExercises.some((exercise) => exercise.id === current) ? current : progressExercises[0]?.id ?? null)
-  }, [progressExercises])
   const day: Day = normalizeScheduleDay(dayByDate[selected] ?? { date: selected, notes: '', rest: true, skipped: false, items: [] })
   const workoutItems = day.items.filter((item) => !isHabitItem(item))
   const habitItems = day.items.filter(isHabitItem)
@@ -1537,12 +1422,27 @@ export default function App() {
   const habitTotal = habitItems.length + dueHabits.length
   const habitDone = habitItems.filter((item) => item.done).length
   const hasHabitLibrary = state.exercises.some((exercise) => exercise.kind === 'habit')
+  const dailyNumbersSummary = [
+    dailyHealthDraft.calories.trim() && `${Number(dailyHealthDraft.calories).toLocaleString()} kcal`,
+    dailyHealthDraft.protein.trim() && `${dailyHealthDraft.protein} g protein`,
+    dailyHealthDraft.steps.trim() && `${Number(dailyHealthDraft.steps).toLocaleString()} steps`,
+    dailyHealthDraft.weight.trim() && `${dailyHealthDraft.weight} lb`,
+  ].filter(Boolean).join(' · ')
+  const weekDayStatus = (date: string): WeekDayStatus => {
+    const entry = dayByDate[date]
+    if (!entry) return { workout: 'none', habitsDone: 0 }
+    const workout = entry.items.filter((item) => !isHabitItem(item))
+    const habitsDone = entry.items.filter((item) => isHabitItem(item) && item.done).length
+    if (!workout.length) return { workout: 'none', habitsDone }
+    if (entry.skipped) return { workout: 'skipped', habitsDone }
+    const doneCount = workout.filter((item) => item.done).length
+    return { workout: doneCount === workout.length ? 'done' : doneCount ? 'partial' : 'planned', habitsDone }
+  }
   const pickerItems = daySheet?.mode === 'add'
     ? sortedExercises.filter((exercise) => exercise.kind === daySheet.kind && (!pickerQuery.trim() || `${exercise.name} ${exercise.category} ${exercise.equipment}`.toLowerCase().includes(pickerQuery.trim().toLowerCase())))
     : []
   const onSelectedDay = new Set(day.items.map((item) => item.exerciseId))
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
-  const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
   const selectedDayPlanLabel = scheduledPlanLabel(day, state.runs, state.plans)
   const monthDays = useMemo(() => monthGrid(month), [month])
   const sortedDays = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
@@ -1559,6 +1459,11 @@ export default function App() {
   const visibleDays = scheduleView === 'list' ? listDays.slice(0, visibleListCount) : sortedDays
   const pushToast = (message: string, action?: Toast['action']) => setToasts((current) => [...current, { id: id('toast'), message, createdAt: Date.now(), action }].slice(-3))
   const pushUndoToast = (message: string, undo: () => Promise<unknown>) => pushToast(message, { label: 'Undo', run: () => void undo() })
+  const hasDailyNumbers = Boolean(dailyNumbersSummary)
+  useEffect(() => {
+    // Once a day's numbers are in (often synced from the phone), show the one-line summary instead of the form.
+    if (!dailyHealthLoading && hasDailyNumbers) setOpenDaySections((current) => current.health ? { ...current, health: false } : current)
+  }, [dailyHealthLoading, selected]) // eslint-disable-line react-hooks/exhaustive-deps
   const toggleDaySection = (section: DaySection) => setOpenDaySections((current) => ({ ...current, [section]: !current[section] }))
   const updateScheduleMoveTargetFromPoint = (clientY: number) => {
     if (!scheduleTouchDragRef.current?.active) return
@@ -1845,7 +1750,6 @@ export default function App() {
         setState((current) => ({ ...current, exercises: starterExercises }))
         setSelectedExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
         setExerciseEditorMode((current) => current === 'new' ? current : (starterExercises[0] ? 'existing' : 'new'))
-        setSelectedProgressExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
         return
       }
 
@@ -1855,7 +1759,6 @@ export default function App() {
       setState((current) => ({ ...current, exercises: remoteExercises }))
       setSelectedExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
       setExerciseEditorMode((current) => current === 'new' ? current : (remoteExercises[0] ? 'existing' : 'new'))
-      setSelectedProgressExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
     }
 
     void syncExercises()
@@ -1956,14 +1859,13 @@ export default function App() {
       active = false
     }
   }, [user, state.exercises.length, persistScheduleData])
-  const progressHistory = useMemo(() => {
-    if (!progressExercise) return []
-    return [...derivedHistory]
-      .filter((entry) => entry.exerciseId === progressExercise.id && entry.done)
-      .filter((entry) => metric(effectiveProgressMetric(progressExercise, entry.type), entry) !== undefined)
-      .sort((a, b) => a.date.localeCompare(b.date))
-  }, [derivedHistory, progressExercise])
-  const editingLog = progressHistory.find((entry) => entry.id === editingLogId)
+  const openDayFromCalendar = (date: string) => {
+    openTab('schedule')
+    focusDay(date)
+  }
+  const planSubNav = <div className="segmented subNav" role="group" aria-label="Plan sections">
+    {([['plans', 'Program'], ['calendar', 'Calendar'], ['exercises', 'Library']] as const).map(([id0, label]) => <button key={id0} type="button" className={tab === id0 ? 'segment active' : 'segment'} aria-pressed={tab === id0} onClick={() => openTab(id0)}>{label}</button>)}
+  </div>
   const focusDay = (date: string, jumpToDetail = false) => {
     setSelected(date)
     setMonth(monthKey(date))
@@ -2424,16 +2326,6 @@ export default function App() {
       await moveScheduleDay(sourceDate, target.date, target.placement)
     }
   }
-  const beginLogEdit = (log: Log) => {
-    const exercise = exById[log.exerciseId]
-    if (!exercise) return
-    setEditingLogId(log.id)
-    setProgressEdit(defaultResultForLog(log, exercise))
-  }
-  const cancelLogEdit = () => {
-    setEditingLogId(null)
-    setProgressEdit({})
-  }
   const saveItemDraft = async (item: Item, exercise: Exercise, markComplete = false) => {
     const draft = itemDrafts[item.id] ?? makeItemDraft(item, exercise)
     const nextResult: Result = {}
@@ -2520,31 +2412,49 @@ export default function App() {
     setSelectedExerciseId(next.exercises[0]?.id ?? null)
     setExerciseEditorMode(next.exercises[0] ? 'existing' : 'new')
     setExerciseForm(next.exercises[0] ? formFromExercise(next.exercises[0]) : emptyExerciseForm())
-    setSelectedProgressExerciseId(next.exercises[0]?.id ?? null)
     setSelectedPlanId(null)
     setPlanForm(emptyPlanForm())
     setApplyPlanId(null)
     setApplyStartDate(nextToday)
     setItemDrafts({})
-    cancelLogEdit()
   }
-  const saveLogEdit = async () => {
-    if (!editingLog) return
-    const exercise = exById[editingLog.exerciseId]
-    if (!exercise) return
-    const nextResult: Result = { ...progressEdit }
-    if (editingLog.sourceItemId) {
-      await updateItemOnDate(editingLog.date, editingLog.sourceItemId, (item) => ({ ...item, result: nextResult, done: true }), { persistMode: 'immediate' })
-    } else {
-      await commitScheduleState(state.schedule, state.runs, state.logs.map((entry) => entry.id === editingLog.id ? { ...entry, result: nextResult } : entry), { persistMode: 'immediate' })
+  const saveProfile = async () => {
+    if (!supabase || !user || profileSaving) return
+    const thisYear = new Date().getFullYear()
+    const birthYear = profileDraft.birthYear.trim() ? Number(profileDraft.birthYear) : null
+    if (birthYear !== null && (!Number.isInteger(birthYear) || birthYear < thisYear - 100 || birthYear > thisYear - 13)) {
+      pushToast('Check the birth year.')
+      return
     }
-    pushToast(`${exercise.name} log updated.`)
-    cancelLogEdit()
-  }
-  const openLogDay = (log: Log) => {
-    openTab('schedule')
-    setSelected(log.date)
-    setMonth(monthKey(log.date))
+    const feet = profileDraft.heightFeet.trim() ? Number(profileDraft.heightFeet) : 0
+    const inches = profileDraft.heightInches.trim() ? Number(profileDraft.heightInches) : 0
+    const heightInches = feet || inches ? feet * 12 + inches : null
+    if (heightInches !== null && (!Number.isFinite(heightInches) || heightInches < 48 || heightInches > 96)) {
+      pushToast('Check the height.')
+      return
+    }
+    setProfileSaving(true)
+    // The table requires goal_name on every write (NOT NULL is checked before an upsert updates), so carry the current one along.
+    const { data: existingRows } = await supabase.from('coaching_profiles').select('id, goal_name').eq('user_id', user.id)
+    const existing = existingRows?.[0] as { id?: string; goal_name?: string } | undefined
+    const { error } = await supabase.from('coaching_profiles').upsert({
+      id: existing?.id ?? `coach-profile-${user.id}`,
+      user_id: user.id,
+      goal_name: existing?.goal_name ?? 'General fitness',
+      birth_year: birthYear,
+      sex: profileDraft.sex || null,
+      height_inches: heightInches,
+      powerblock_colors: profileDraft.powerblockColors,
+    })
+    setProfileSaving(false)
+    if (error) {
+      pushToast('Could not save your profile.')
+      return
+    }
+    const next: CoachProfile = { birthYear, sex: profileDraft.sex || null, heightInches, powerblockColors: profileDraft.powerblockColors }
+    setCoachProfile(next)
+    setProfileDraft(profileDraftFrom(next))
+    pushToast('Profile saved.')
   }
   const exportData = () => {
     const stamp = new Date().toISOString().slice(0, 10)
@@ -2899,7 +2809,6 @@ export default function App() {
     }))
     setSelectedExerciseId(nextExercise?.id ?? null)
     setExerciseEditorMode(nextExercise ? 'existing' : 'new')
-    setSelectedProgressExerciseId((current) => current === exerciseId ? nextExercise?.id ?? null : current)
     setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm())
   }
   const deleteRun = async (runId: string, options?: { keepCompletedDays?: boolean }) => {
@@ -2936,7 +2845,6 @@ export default function App() {
   }
   const resetScheduleData = async () => {
     await commitScheduleState([], [], state.logs.filter((entry) => !entry.sourceItemId), { selectedDate: today })
-    cancelLogEdit()
     pushToast('Schedule and runs cleared.')
   }
   const resetProgressData = async () => {
@@ -2948,7 +2856,6 @@ export default function App() {
       state.runs,
       [],
     )
-    cancelLogEdit()
     pushToast('Progress history cleared.')
   }
   const confirmAction = async () => {
@@ -3015,7 +2922,10 @@ export default function App() {
   }
 
   const saveExercise = async () => {
-    if (!exerciseForm.name.trim()) return
+    if (!exerciseForm.name.trim()) {
+      pushToast('Give it a name first.')
+      return false
+    }
     const isEditingExisting = exerciseEditorMode === 'existing' && !!selectedExerciseId
     const nextExerciseId = isEditingExisting && selectedExerciseId ? selectedExerciseId : id('ex')
     const nextKind = sanitizeExerciseKind(exerciseForm.kind)
@@ -3043,7 +2953,7 @@ export default function App() {
       const { error } = await client.from('exercises').upsert(exerciseRow(nextExercise, user.id))
       if (error) {
         pushToast('Could not save item.')
-        return
+        return false
       }
       serverExerciseIdsRef.current.add(nextExercise.id)
     }
@@ -3060,6 +2970,7 @@ export default function App() {
     setExerciseEditorMode('existing')
     setExerciseForm(formFromExercise(nextExercise))
     pushToast(isEditingExisting ? `${nextExercise.name} saved.` : `${nextExercise.name} added to your library.`)
+    return true
   }
 
   const switchLibraryFilter = (nextFilter: TK) => {
@@ -3156,6 +3067,10 @@ export default function App() {
             const metricActions = ex.refs.map((r) => <button key={r} className="miniAction" onClick={() => setItemDrafts((current) => ({ ...current, [item.id]: applyReferenceToDraft(exerciseHistory(ex.id), ex, r, current[item.id] ?? makeItemDraft(item, ex)) }))}>{r === 'last-result' ? 'Last' : 'PB'} {referenceSummary(exerciseHistory(ex.id), ex, r, draft.type)}</button>)
             const lastResult = referenceSummary(exerciseHistory(ex.id), ex, 'last-result', draft.type)
             const loggedSets = item.done ? resultSetSummary(item.result) : ''
+            const showPowerBlock = coachProfile.powerblockColors && ex.kind === 'exercise' && effectiveProgressMetric(ex, item.type) === 'weight'
+            const previousLog = showPowerBlock ? exerciseHistory(ex.id).filter((entry) => entry.sourceItemId !== item.id).at(-1) : undefined
+            const plannedWeight = item.done ? loggedWeight(item) : item.target.weight ?? (previousLog ? loggedWeight(previousLog) : undefined)
+            const draftWeight = draft.weightText.trim() ? Number(draft.weightText) : plannedWeight
             return <article key={item.id} className={item.done ? 'workoutItem workoutItemDone' : 'workoutItem'}>
               <div className="workoutItemRow">
                 <button className="workoutItemMain" onClick={() => {
@@ -3166,6 +3081,7 @@ export default function App() {
                 }} aria-expanded={expanded}>
                   <div className="workoutItemHeading">
                     <h3>{ex.name}</h3>
+                    {showPowerBlock && <PowerBlockBadge weight={plannedWeight} compact />}
                   </div>
                   <span className="workoutItemMeta">{ex.kind === 'habit' ? habitMeta(ex, item.type, item.target) : <>{loggedSets ? `Logged ${loggedSets}` : workoutSummary(item.type, item.target)}{lastResult !== 'none' ? ` · Last ${lastResult}` : ''}</>}</span>
                 </button>
@@ -3185,6 +3101,7 @@ export default function App() {
                     return { ...current, [item.id]: { ...activeDraft, timeText: parsed !== undefined ? fmtSecs(parsed) : activeDraft.timeText } }
                   })} /></label>}
                   {progressMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="text" inputMode="decimal" placeholder="0" value={draft.weightText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), weightText: e.target.value } }))} /></label>}
+                  {progressMetric === 'weight' && showPowerBlock && <div className="powerBlockHint"><span>PowerBlock</span><PowerBlockBadge weight={draftWeight} /></div>}
                   {supportsSetResults && <label className="field setRepsField"><span>Reps by set</span><div className="setRepsInputWrap"><input ref={(node) => { setRepsInputRefs.current[item.id] = node }} type="text" inputMode="numeric" placeholder="8 / 8 / 7 / 7" value={draft.setRepsText} onChange={(e) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), setRepsText: e.target.value } }))} /><button type="button" className="setSeparatorButton" aria-label="Add separator between sets" onPointerDown={(event) => event.preventDefault()} onClick={() => {
                     let nextText = ''
                     setItemDrafts((current) => {
@@ -3256,24 +3173,27 @@ export default function App() {
               title={scheduleSaveStatus === 'conflict' ? 'Reload to reconcile changes from another tab or device.' : scheduleSaveStatus === 'error' ? 'Retry saving.' : undefined}
             >{{ saving: 'Saving…', saved: 'Saved', error: 'Save failed · Retry', conflict: 'Changed elsewhere · Reload', idle: '' }[scheduleSaveStatus]}</button>}
             {hasSupabaseEnv && !user && !authLoading && <button className="pill authButton" onClick={signInWithGoogle}>Sign in</button>}
-            {hasSupabaseEnv && user && <button className="avatarButton" onClick={() => openTab('settings')} aria-label="Open profile settings">
-              {userAvatar ? <img src={userAvatar} alt={user.email ?? 'Profile'} className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
-            </button>}
-            <button className={tab === 'settings' ? 'iconPill activeIconPill settingsButton' : 'iconPill settingsButton'} onClick={() => openTab('settings')} aria-label="Open settings">
+            {hasSupabaseEnv && user ? <button className={tab === 'settings' ? 'avatarButton activeAvatar' : 'avatarButton'} onClick={() => openTab('settings')} aria-label="Settings and profile">
+              {userAvatar ? <img src={userAvatar} alt="" className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}
+            </button> : <button className={tab === 'settings' ? 'iconPill activeIconPill settingsButton' : 'iconPill settingsButton'} onClick={() => openTab('settings')} aria-label="Open settings">
               <svg className="settingsGlyph" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 8.7a3.3 3.3 0 1 0 0 6.6a3.3 3.3 0 0 0 0-6.6Zm9 3.3l-2.1-.7c-.1-.4-.2-.8-.4-1.2l1-2L17.9 6l-2 .9c-.4-.2-.8-.3-1.2-.4L14 4h-4l-.7 2.5c-.4.1-.8.2-1.2.4l-2-.9L4.5 8.1l1 2c-.2.4-.3.8-.4 1.2L3 12l.7 2.1c.1.4.2.8.4 1.2l-1 2L6.1 18l2-.9c.4.2.8.3 1.2.4L10 20h4l.7-2.5c.4-.1.8-.2 1.2-.4l2 .9l1.6-1.9l-1-2c.2-.4.3-.8.4-1.2L21 12Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-            </button>
+            </button>}
           </div>
         </div>
 
         <nav className="topNav" aria-label="Primary navigation">
-          {(['schedule', 'coach', 'plans', 'exercises'] as const).map((x) => <button key={x} className={tab === x ? 'pill active topNavButton' : 'pill topNavButton'} onClick={() => openTab(x)}>{{ schedule: 'Today', coach: 'Coach', exercises: 'Library', plans: 'Plan' }[x]}</button>)}
+          {(['schedule', 'progress', 'plans', 'coach'] as const).map((x) => {
+            const active = x === 'plans' ? (PLAN_TABS as readonly string[]).includes(tab) : tab === x
+            return <button key={x} className={active ? 'topNavButton active' : 'topNavButton'} aria-current={active ? 'page' : undefined} onClick={() => openTab(x)}>{{ schedule: 'Today', progress: 'Progress', plans: 'Plan', coach: 'Coach' }[x]}</button>
+          })}
         </nav>
       </header>
 
-      {tab === 'schedule' && <main className="grid scheduleGrid">
+      {tab === 'schedule' && <main className="todayPage">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
+          <WeekStrip selected={selected} today={today} statusFor={weekDayStatus} onSelect={(date) => focusDay(date)} />
           <div className="dayDetailHeader">
             <div className="dayDetailTopRow">
               <p className="eyebrow">{selected === today ? 'Today' : 'Workout'}</p>
@@ -3306,7 +3226,7 @@ export default function App() {
           </section>}
           <section className={`dayFlowSection workoutSection ${openDaySections.workout ? '' : 'collapsedSection'}`}>
             <button type="button" className="collapsibleSectionHeader" onClick={() => toggleDaySection('workout')} aria-expanded={openDaySections.workout} aria-controls="workout-section-content">
-              <div><p className="eyebrow">Workout</p><h3>{isRestDay ? 'Rest day' : selectedDayPlanLabel || 'Today’s session'}</h3></div>
+              <div><p className="eyebrow">Workout</p><h3>{isRestDay ? 'Rest day' : `${workoutItems.length} exercise${workoutItems.length === 1 ? '' : 's'}`}</h3></div>
               <div className="sectionHeaderStatus"><span>{isRestDay ? 'Recovery' : workoutComplete ? 'Complete' : `${completedWorkoutItems} of ${workoutItems.length}`}</span><span className="sectionChevron" aria-hidden="true">⌄</span></div>
             </button>
             {openDaySections.workout && <div id="workout-section-content" className="collapsibleSectionContent">
@@ -3323,8 +3243,8 @@ export default function App() {
           </section>
           <section className={`dailyHealthCard ${openDaySections.health ? '' : 'collapsedSection'}`} aria-labelledby="daily-health-title">
             <button type="button" className="dailyHealthHeading collapsibleSectionHeader" onClick={() => toggleDaySection('health')} aria-expanded={openDaySections.health} aria-controls="daily-health-content">
-              <div><p className="eyebrow">Daily numbers</p><h3 id="daily-health-title">Nutrition, activity & weight</h3></div>
-              <div className="sectionHeaderStatus"><span className="sourceBadge">Daily totals</span><span className="sectionChevron" aria-hidden="true">⌄</span></div>
+              <div><p className="eyebrow">Daily numbers</p><h3 id="daily-health-title" className={dailyNumbersSummary ? 'dailySummaryLine' : undefined}>{dailyNumbersSummary || 'Nutrition, activity & weight'}</h3></div>
+              <div className="sectionHeaderStatus"><span>{dailyNumbersSummary ? (openDaySections.health ? 'Close' : 'Edit') : 'Add'}</span><span className="sectionChevron" aria-hidden="true">⌄</span></div>
             </button>
             {openDaySections.health && <div id="daily-health-content" className="collapsibleSectionContent">
             {dailyHealthLoading ? <p className="mutedCopy">Loading daily numbers...</p> : <>
@@ -3406,88 +3326,6 @@ export default function App() {
             </div>}
           </section>
         </section>
-
-        <section className="panel scheduleCalendarPanel">
-          <div className="row scheduleOverviewHeader">
-            <div><p className="eyebrow">Schedule</p><h3>Choose another day</h3></div>
-            <button className="pill" onClick={() => setScheduleOpen((current) => !current)} aria-expanded={scheduleOpen}>{scheduleOpen ? 'Hide schedule' : 'View schedule'}</button>
-          </div>
-          {scheduleOpen && <div className="scheduleBrowser stack">
-          <div className="nav scheduleToggle">{(['calendar', 'list'] as const).map((x) => <button key={x} className={scheduleView === x ? 'pill active' : 'pill'} onClick={() => { setScheduleView(x); if (x === 'list') setVisibleListCount(5) }}>{x === 'calendar' ? 'Month' : 'List'}</button>)}</div>
-          {scheduleView === 'calendar' ? <div className="calendarWrap">
-            <div className="row"><button className="pill" onClick={() => setMonth(add(month, -28))}>Previous</button><h3>{fmtMonth(month)}</h3><button className="pill" onClick={() => setMonth(add(month, 35))}>Next</button></div>
-            <div className="week">{DAYS.map((x) => <span key={x}>{x}</span>)}</div>
-            <div className="calendar">{monthDays.map((date) => {
-              const x = dayByDate[date], sameMonth = date.startsWith(month.slice(0, 7))
-              const workout = x ? x.items.filter((i) => !isHabitItem(i)) : []
-              const isComplete = workout.length > 0 && workout.every((i) => i.done)
-              const isRest = workout.length === 0
-              return <button key={date} className={['day', date === selected && 'selected', date === today && 'todayMark', !sameMonth && 'dim', isComplete && 'completeDay'].filter(Boolean).join(' ')} onClick={() => focusDay(date, true)}>
-                <span>{d(date).getDate()}</span>
-                <small>{x?.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${workout.filter((i) => i.done).length}/${workout.length}`}</small>
-              </button>
-            })}</div>
-          </div> : <div className="stack">{visibleDays.map((x) => {
-            const workout = x.items.filter((i) => !isHabitItem(i))
-            const habitsLogged = x.items.filter((i) => isHabitItem(i) && i.done).length
-            const isComplete = workout.length > 0 && workout.every((i) => i.done)
-            const isRest = workout.length === 0
-            const planLabel = scheduledPlanLabel(x, state.runs, state.plans)
-            const isDragging = draggedScheduleDayDate === x.date
-            const beforeTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'before'
-            const afterTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'after'
-            const sourceIndex = visibleDays.findIndex((day0) => day0.date === draggedScheduleDayDate)
-            const targetIndex = scheduleMoveTarget ? visibleDays.findIndex((day0) => day0.date === scheduleMoveTarget.date) : -1
-            const insertIndex = targetIndex < 0 ? -1 : targetIndex + (scheduleMoveTarget?.placement === 'after' ? 1 : 0)
-            const currentIndex = visibleDays.findIndex((day0) => day0.date === x.date)
-            const shiftUp = sourceIndex >= 0 && insertIndex > sourceIndex && currentIndex > sourceIndex && currentIndex < insertIndex
-            const shiftDown = sourceIndex >= 0 && insertIndex >= 0 && insertIndex <= sourceIndex && currentIndex >= insertIndex && currentIndex < sourceIndex
-            return <div
-              key={x.date}
-              className="agendaItemShell"
-            >
-              <div className={beforeTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
-              <div
-                data-schedule-card-date={x.date}
-                ref={(node) => { scheduleCardRefs.current[x.date] = node }}
-                className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : '', shiftUp ? 'agendaShiftUp' : '', shiftDown ? 'agendaShiftDown' : ''].filter(Boolean).join(' ')}
-                onClick={() => {
-                  if (draggedScheduleDayDate) return
-                  if (suppressScheduleDayClickRef.current) {
-                    suppressScheduleDayClickRef.current = false
-                    return
-                  }
-                  focusDay(x.date, true)
-                }}
-                onPointerDown={(event) => handleScheduleDayPointerDown(event, x.date)}
-                onPointerMove={handleScheduleDayPointerMove}
-                onPointerUp={(event) => { void finishScheduleDayPointer(event) }}
-                onPointerCancel={() => clearScheduleDragState()}
-              >
-                <div className="agendaDateRow">
-                  <div className="agendaOpenButton">
-                    <strong>{fmtDay(x.date)}{planLabel && <span className="inlineDateMeta"> | {planLabel}</span>}</strong>
-                    <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${workout.filter((i) => i.done).length}/${workout.length}`}</span>
-                  </div>
-                </div>
-                {isRest ? <p className="mutedCopy">- Rest day{habitsLogged ? ` · ${habitsLogged} habit${habitsLogged === 1 ? '' : 's'} done` : ''}</p> : <div className="agendaBullets">
-                  {workout.map((item) => {
-                    const ex = exById[item.exerciseId]
-                    if (!ex) return null
-                    return <div key={item.id} className="agendaBullet">- {ex.name} | {sum(item.type, item.target)}</div>
-                  })}
-                  {habitsLogged > 0 && <div className="agendaBullet mutedCopy">- {habitsLogged} habit{habitsLogged === 1 ? '' : 's'} done</div>}
-                </div>}
-              </div>
-              <div className={afterTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
-            </div>
-          })}</div>}
-          {scheduleView === 'list' && <div className="nav loadMoreRow">
-            {!showPastDays && pastDays.length > 0 && <button className="pill" onClick={() => { setShowPastDays(true); setVisibleListCount((current) => current + pastDays.length) }}>Load previous</button>}
-            {listDays.length > visibleListCount && <button className="pill" onClick={() => setVisibleListCount((current) => current + 5)}>Load 5 more</button>}
-          </div>}
-          </div>}
-        </section>
       </main>}
 
       {daySheet?.mode === 'add' && <Sheet title={daySheet.kind === 'habit' ? 'Add a habit' : 'Add an exercise'} subtitle={fmtDay(selected)} onClose={closeDaySheet}>
@@ -3558,43 +3396,123 @@ export default function App() {
         </div>)}
       </div>
 
+      {tab === 'calendar' && <main className="stack planGroupPage">
+        {planSubNav}
+        <section className="panel scheduleCalendarPanel">
+          <div className="row scheduleOverviewHeader">
+            <div><p className="eyebrow">Calendar</p><h3>Your schedule</h3><p className="mutedCopy">Tap a day to open it. In the list, press and hold a day to drag it somewhere else.</p></div>
+          </div>
+          <div className="scheduleBrowser stack">
+          <div className="nav scheduleToggle">{(['calendar', 'list'] as const).map((x) => <button key={x} className={scheduleView === x ? 'pill active' : 'pill'} onClick={() => { setScheduleView(x); if (x === 'list') setVisibleListCount(5) }}>{x === 'calendar' ? 'Month' : 'List'}</button>)}</div>
+          {scheduleView === 'calendar' ? <div className="calendarWrap">
+            <div className="row"><button className="pill" onClick={() => setMonth(add(month, -28))}>Previous</button><h3>{fmtMonth(month)}</h3><button className="pill" onClick={() => setMonth(add(month, 35))}>Next</button></div>
+            <div className="week">{DAYS.map((x) => <span key={x}>{x}</span>)}</div>
+            <div className="calendar">{monthDays.map((date) => {
+              const x = dayByDate[date], sameMonth = date.startsWith(month.slice(0, 7))
+              const workout = x ? x.items.filter((i) => !isHabitItem(i)) : []
+              const isComplete = workout.length > 0 && workout.every((i) => i.done)
+              const isRest = workout.length === 0
+              return <button key={date} className={['day', date === selected && 'selected', date === today && 'todayMark', !sameMonth && 'dim', isComplete && 'completeDay'].filter(Boolean).join(' ')} onClick={() => openDayFromCalendar(date)}>
+                <span>{d(date).getDate()}</span>
+                <small>{x?.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${workout.filter((i) => i.done).length}/${workout.length}`}</small>
+              </button>
+            })}</div>
+          </div> : <div className="stack">{visibleDays.map((x) => {
+            const workout = x.items.filter((i) => !isHabitItem(i))
+            const habitsLogged = x.items.filter((i) => isHabitItem(i) && i.done).length
+            const isComplete = workout.length > 0 && workout.every((i) => i.done)
+            const isRest = workout.length === 0
+            const planLabel = scheduledPlanLabel(x, state.runs, state.plans)
+            const isDragging = draggedScheduleDayDate === x.date
+            const beforeTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'before'
+            const afterTargetOn = !!draggedScheduleDayDate && draggedScheduleDayDate !== x.date && scheduleMoveTarget?.date === x.date && scheduleMoveTarget.placement === 'after'
+            const sourceIndex = visibleDays.findIndex((day0) => day0.date === draggedScheduleDayDate)
+            const targetIndex = scheduleMoveTarget ? visibleDays.findIndex((day0) => day0.date === scheduleMoveTarget.date) : -1
+            const insertIndex = targetIndex < 0 ? -1 : targetIndex + (scheduleMoveTarget?.placement === 'after' ? 1 : 0)
+            const currentIndex = visibleDays.findIndex((day0) => day0.date === x.date)
+            const shiftUp = sourceIndex >= 0 && insertIndex > sourceIndex && currentIndex > sourceIndex && currentIndex < insertIndex
+            const shiftDown = sourceIndex >= 0 && insertIndex >= 0 && insertIndex <= sourceIndex && currentIndex >= insertIndex && currentIndex < sourceIndex
+            return <div
+              key={x.date}
+              className="agendaItemShell"
+            >
+              <div className={beforeTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
+              <div
+                data-schedule-card-date={x.date}
+                ref={(node) => { scheduleCardRefs.current[x.date] = node }}
+                className={[x.date === selected ? 'listItem activeItem agendaItem' : 'listItem agendaItem', isComplete ? 'completeDay' : '', isDragging ? 'draggingAgendaItem' : '', shiftUp ? 'agendaShiftUp' : '', shiftDown ? 'agendaShiftDown' : ''].filter(Boolean).join(' ')}
+                onClick={() => {
+                  if (draggedScheduleDayDate) return
+                  if (suppressScheduleDayClickRef.current) {
+                    suppressScheduleDayClickRef.current = false
+                    return
+                  }
+                  openDayFromCalendar(x.date)
+                }}
+                onPointerDown={(event) => handleScheduleDayPointerDown(event, x.date)}
+                onPointerMove={handleScheduleDayPointerMove}
+                onPointerUp={(event) => { void finishScheduleDayPointer(event) }}
+                onPointerCancel={() => clearScheduleDragState()}
+              >
+                <div className="agendaDateRow">
+                  <div className="agendaOpenButton">
+                    <strong>{fmtDay(x.date)}{planLabel && <span className="inlineDateMeta"> | {planLabel}</span>}</strong>
+                    <span>{x.skipped ? 'Skipped' : isRest ? 'Rest' : isComplete ? 'Done' : `${workout.filter((i) => i.done).length}/${workout.length}`}</span>
+                  </div>
+                </div>
+                {isRest ? <p className="mutedCopy">- Rest day{habitsLogged ? ` · ${habitsLogged} habit${habitsLogged === 1 ? '' : 's'} done` : ''}</p> : <div className="agendaBullets">
+                  {workout.map((item) => {
+                    const ex = exById[item.exerciseId]
+                    if (!ex) return null
+                    return <div key={item.id} className="agendaBullet">- {ex.name} | {sum(item.type, item.target)}</div>
+                  })}
+                  {habitsLogged > 0 && <div className="agendaBullet mutedCopy">- {habitsLogged} habit{habitsLogged === 1 ? '' : 's'} done</div>}
+                </div>}
+              </div>
+              <div className={afterTargetOn ? 'agendaInsertionLine activeInsertionLine' : 'agendaInsertionLine'} />
+            </div>
+          })}</div>}
+          {scheduleView === 'list' && <div className="nav loadMoreRow">
+            {!showPastDays && pastDays.length > 0 && <button className="pill" onClick={() => { setShowPastDays(true); setVisibleListCount((current) => current + pastDays.length) }}>Load previous</button>}
+            {listDays.length > visibleListCount && <button className="pill" onClick={() => setVisibleListCount((current) => current + 5)}>Load 5 more</button>}
+          </div>}
+          </div>
+        </section>
+      </main>}
+
       {tab === 'coach' && <main className="coachPage">
         <section className="panel programCoachPanel">
           <div className="programCoachHeader">
-            <div><p className="eyebrow">AI program coach</p><h2>Ask about the bigger picture</h2><p>Review exercise selection, progression, weekly structure, recovery, or whether the program should change.</p></div>
-            <span className="sourceBadge">Fresh app data each question</span>
-          </div>
-          <div className="programCoachWindow">
-            <div><strong>Review window</strong><p>Choose how much recent history the coach should weigh most heavily.</p></div>
-            <div className="scheduleModePicker" role="group" aria-label="Program coach review window">
-              {([28, 56, 84] as const).map((days) => <button key={days} className={programCoachLookback === days ? 'pill active' : 'pill'} onClick={() => setProgramCoachLookback(days)}>{days / 7} weeks</button>)}
+            <div><p className="eyebrow">Program coach</p><h2>Ask about the big picture</h2></div>
+            <div className="segmented" role="group" aria-label="How much history to look at">
+              {([28, 56, 84] as const).map((days) => <button key={days} type="button" className={programCoachLookback === days ? 'segment active' : 'segment'} aria-pressed={programCoachLookback === days} onClick={() => setProgramCoachLookback(days)}>{days / 7} wk</button>)}
             </div>
           </div>
-          <div className="programCoachContextLine">
-            <strong>Included automatically</strong>
-            <span>Plans and runs · every completed exercise result · workout notes · nutrition and steps · weight trend · goals · equipment · safety notes · recent daily reviews</span>
-          </div>
-          {programCoachLoading ? <div className="coachReviewEmpty"><p>Loading your program conversation...</p></div> : <div className="programCoachConversation">
+          {programCoachLoading ? <div className="coachReviewEmpty"><p>Loading your conversation...</p></div> : <div className="programCoachConversation">
             {programCoachMessages.length === 0 ? <div className="programCoachEmpty">
-              <div><strong>A few useful starting points</strong><p>The coach will use the selected review window and your current structured records.</p></div>
+              <p className="mutedCopy">Ask about exercise choices, progression, weekly structure, recovery, or whether your program should change. Try one of these:</p>
               <div className="programCoachStarters">
-                {["Review my overall program now that I’m finishing my first four weeks.", 'Are these still the right exercises for my goal and equipment?', 'Should I change my number of lifting or cardio days?'].map((prompt) => <button key={prompt} className="starterPrompt" onClick={() => setProgramCoachDraft(prompt)}>{prompt}</button>)}
+                {["Review my overall program now that I’m finishing my first four weeks.", 'Are these still the right exercises for my goal and equipment?', 'Should I change my number of lifting or cardio days?'].map((prompt) => <button key={prompt} type="button" className="starterPrompt" onClick={() => setProgramCoachDraft(prompt)}>{prompt}</button>)}
               </div>
-            </div> : <div className="coachMessages programCoachMessages">{programCoachMessages.map((message) => <div key={message.id} className={`coachMessage ${message.role}`}><span>{message.role === 'assistant' ? 'Program coach' : 'You'}{message.lookback_days ? ` · ${message.lookback_days / 7} weeks` : ''}</span><p>{message.content}</p></div>)}</div>}
+            </div> : <div className="coachMessages programCoachMessages">{programCoachMessages.map((message) => <div key={message.id} className={`coachMessage ${message.role}`}><span>{message.role === 'assistant' ? 'Coach' : 'You'}{message.lookback_days ? ` · ${message.lookback_days / 7} wk` : ''}</span><p>{message.content}</p></div>)}</div>}
             <div className="programCoachComposer">
-              <textarea rows={3} value={programCoachDraft} onChange={(event) => setProgramCoachDraft(event.target.value)} placeholder="Ask about your overall program..." maxLength={4000} />
-              <button className="primary" onClick={() => void sendProgramCoachMessage()} disabled={programCoachSending || !programCoachDraft.trim()}>{programCoachSending ? 'Reviewing your history...' : 'Ask program coach'}</button>
+              <textarea rows={2} value={programCoachDraft} onChange={(event) => setProgramCoachDraft(event.target.value)} placeholder="Ask the coach…" maxLength={4000} aria-label="Message to the coach" />
+              <button className="primary" onClick={() => void sendProgramCoachMessage()} disabled={programCoachSending || !programCoachDraft.trim()}>{programCoachSending ? 'Thinking…' : 'Send'}</button>
             </div>
-            <small className="programCoachAdvisory">Recommendations are advisory. The coach will not change your plan unless you explicitly choose to make a change.</small>
+            <details className="howItWorks">
+              <summary>What the coach sees</summary>
+              <p>Each question includes fresh app data: your plans and programs, every completed result, workout notes, nutrition and steps, weight trend, goals, equipment, safety notes, and recent daily reviews. Advice only — it won’t change your plan unless you choose to.</p>
+            </details>
           </div>}
         </section>
       </main>}
 
-      {tab === 'exercises' && <main className="grid">
+      {tab === 'exercises' && <main className="stack planGroupPage">
+        {planSubNav}
         <section className="panel stack">
           <div className="row">
             <div><p className="eyebrow">Library</p><h2>Find an item</h2></div>
-            <button className="pill" onClick={startNewExercise}>New {libraryFilter}</button>
+            <button className="primary" onClick={() => { startNewExercise(); setLibraryEditorOpen(true) }}>New {libraryFilter}</button>
           </div>
           <div className="nav">
             {(['exercise', 'habit'] as const).map((kind) => <button key={kind} className={libraryFilter === kind ? 'pill active' : 'pill'} onClick={() => switchLibraryFilter(kind)}>{TRACKABLE_KIND_LABEL[kind]}s</button>)}
@@ -3602,11 +3520,17 @@ export default function App() {
           <label className="field librarySearch"><span>Search</span><input type="search" value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder={`Search ${libraryFilter}s`} /></label>
           <div className="stack compactLibraryList">
             {filteredLibraryExercises.length === 0 && <div className="empty compactEmpty">No matching items.</div>}
-            {filteredLibraryExercises.map((ex) => <button key={ex.id} className={exerciseEditorMode === 'existing' && selectedExerciseId === ex.id ? 'listItem compactLibraryRow activeItem' : 'listItem compactLibraryRow'} onClick={() => selectExercise(ex.id)}><span className="listItemContent"><strong>{ex.name}</strong><span className="listMeta">{ex.category}{ex.kind === 'habit' ? <span className="kindBadge subtleBadge">Habit</span> : null}</span></span><span aria-hidden="true">›</span></button>)}
+            {Array.from(new Set(filteredLibraryExercises.map((ex) => ex.category))).sort(compareStrings).map((category) => <div key={category} className="libraryGroup">
+              <p className="libraryGroupTitle">{category}</p>
+              {filteredLibraryExercises.filter((ex) => ex.category === category).map((ex) => <button key={ex.id} className="libraryRow" onClick={() => { selectExercise(ex.id); setLibraryEditorOpen(true) }}>
+                <span className="listItemContent"><strong>{ex.name}</strong>{ex.kind === 'habit' && ex.repeatDays?.length ? <span className="listMeta">{ex.repeatDays.length === 7 ? 'Every day' : ex.repeatDays.map((day0) => DAYS[day0]).join(', ')}</span> : ex.equipment && ex.kind === 'exercise' ? <span className="listMeta">{ex.equipment}</span> : null}</span>
+                <span aria-hidden="true">›</span>
+              </button>)}
+            </div>)}
           </div>
         </section>
-        <section ref={exerciseDetailRef} className="panel stack">
-          <div><p className="eyebrow">Manage {exerciseForm.kind}</p><h2>{exerciseEditorMode === 'existing' ? `Update ${exerciseForm.kind}` : `Create ${exerciseForm.kind}`}</h2></div>
+        {libraryEditorOpen && <Sheet title={exerciseEditorMode === 'existing' ? exerciseForm.name || 'Edit item' : `New ${exerciseForm.kind}`} subtitle={exerciseEditorMode === 'existing' ? `Edit ${exerciseForm.kind}` : undefined} onClose={() => setLibraryEditorOpen(false)}>
+        <div ref={exerciseDetailRef} className="stack libraryEditor">
           <div><span className="fieldLabel">Type</span><div className="chips">{(['exercise', 'habit'] as const).map((kind) => { const on = exerciseForm.kind === kind; return <button key={kind} className={on ? 'pill active' : 'pill'} onClick={() => {
             setLibraryFilter(kind)
             setExerciseForm((current) => {
@@ -3639,6 +3563,10 @@ export default function App() {
             <p className="mutedCopy">{exerciseForm.repeatDays.length ? 'Shows up on these days automatically, alongside any workout. Remember to save.' : 'Not repeating. Add it to a day by hand from Day options, or pick days above.'}</p>
           </div>}
           <label className="field"><span>Default target type</span><select value={exerciseForm.defaultType} onChange={(e) => setExerciseForm((x) => ({ ...x, defaultType: e.target.value as TT, allowed: Array.from(new Set([...x.allowed, e.target.value as TT])), target: blank(e.target.value as TT) }))}>{allowedTypesForKind(exerciseForm.kind).map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
+          <TargetEditor type={exerciseForm.defaultType} target={exerciseForm.target} durationIn={exerciseForm.kind === 'habit' ? 'minutes' : 'seconds'} onChange={(target) => setExerciseForm((x) => ({ ...x, target }))} />
+          <details className="advancedFields">
+            <summary>Advanced</summary>
+            <div className="stack">
           <label className="field"><span>Progress tracked by</span><select value={exerciseForm.progressMetric} onChange={(e) => setExerciseForm((x) => {
             const nextMetric = e.target.value as PM
             if (nextMetric === 'time' && !['duration', 'distance', 'for-time'].includes(x.defaultType)) {
@@ -3653,17 +3581,55 @@ export default function App() {
             return { ...x, progressMetric: nextMetric }
           })}>{(exerciseForm.kind === 'habit' ? (['count', 'time'] as PM[]) : (Object.keys(PM_LABEL) as PM[])).map((metricOption) => <option key={metricOption} value={metricOption}>{PM_LABEL[metricOption]}</option>)}</select></label>
           <p className="mutedCopy">{progressMetricHint(exerciseForm)}</p>
-          <TargetEditor type={exerciseForm.defaultType} target={exerciseForm.target} durationIn={exerciseForm.kind === 'habit' ? 'minutes' : 'seconds'} onChange={(target) => setExerciseForm((x) => ({ ...x, target }))} />
           <div><span className="fieldLabel">Allowed target types</span><div className="chips">{allowedTypesForKind(exerciseForm.kind).map((t) => { const on = exerciseForm.allowed.includes(t); return <button key={t} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, allowed: on ? (x.allowed.filter((y) => y !== t).length ? x.allowed.filter((y) => y !== t) : [x.defaultType]) : [...x.allowed, t] }))}>{TT_LABEL[t]}</button> })}</div></div>
           <div><span className="fieldLabel">Reference choices</span><div className="chips">{(Object.keys(RM_LABEL) as RM[]).map((r) => { const on = exerciseForm.refs.includes(r); return <button key={r} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, refs: on ? x.refs.filter((y) => y !== r) : [...x.refs, r] }))}>{RM_LABEL[r]}</button> })}</div></div>
+            </div>
+          </details>
           <div className="nav">
-            <button className="primary" onClick={saveExercise}>{exerciseEditorMode === 'existing' ? 'Save changes' : `Create ${exerciseForm.kind}`}</button>
-            {exerciseEditorMode === 'existing' && selectedExerciseId && <button className="iconPill dangerPill destructiveIconButton" onClick={() => setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: `Delete ${exerciseForm.kind}?`, body: 'This will remove the item from the library, plans, scheduled days, and progress history.' })} aria-label={`Delete ${exerciseForm.kind}`}><TrashIcon /></button>}
+            <button className="primary" onClick={() => { void saveExercise().then((saved) => { if (saved) setLibraryEditorOpen(false) }) }}>{exerciseEditorMode === 'existing' ? 'Save changes' : `Create ${exerciseForm.kind}`}</button>
+            {exerciseEditorMode === 'existing' && selectedExerciseId && <button className="iconPill dangerPill destructiveIconButton" onClick={() => { setLibraryEditorOpen(false); setConfirmState({ kind: 'delete-exercise', exerciseId: selectedExerciseId, title: `Delete ${exerciseForm.kind}?`, body: 'This will remove the item from the library, plans, scheduled days, and progress history.' }) }} aria-label={`Delete ${exerciseForm.kind}`}><TrashIcon /></button>}
           </div>
-        </section>
+        </div>
+        </Sheet>}
       </main>}
 
-      {tab === 'plans' && <main className="stack plansPage">
+      {tab === 'plans' && <main className="stack plansPage planGroupPage">
+        {planSubNav}
+        <section className="panel stack currentProgramPanel">
+          <div><p className="eyebrow">Current program</p><h2>{activeRuns.length ? (activeRuns.length === 1 ? 'In progress' : `${activeRuns.length} in progress`) : 'Nothing scheduled'}</h2></div>
+          {activeRuns.length === 0 && <div className="noticeCard"><p>Pick one of your plans below and choose <strong>Start</strong> to put it on the calendar.</p></div>}
+          {activeRuns.map((r) => {
+            const runDays = state.schedule.filter((x) => x.runId === r.id).sort((a, b) => a.date.localeCompare(b.date))
+            const workoutDays = runDays.filter((day0) => day0.items.some((item) => !isHabitItem(item)))
+            const isDone = (day0: Day) => day0.skipped || day0.items.filter((item) => !isHabitItem(item)).every((item) => item.done)
+            const completedDays = workoutDays.filter(isDone).length
+            const totalDays = workoutDays.length
+            const progress = totalDays ? Math.round((completedDays / totalDays) * 100) : 0
+            const firstDate = runDays[0]?.date ?? r.startDate
+            const lastDate = runDays[runDays.length - 1]?.date ?? r.startDate
+            const totalWeeks = Math.max(1, Math.ceil((dateOrdinal(lastDate) - dateOrdinal(firstDate) + 1) / 7))
+            const currentWeek = Math.min(totalWeeks, Math.max(1, Math.floor((dateOrdinal(today) - dateOrdinal(firstDate)) / 7) + 1))
+            const nextDay = workoutDays.find((day0) => day0.date >= today && !isDone(day0))
+            const nextNames = nextDay ? nextDay.items.filter((item) => !isHabitItem(item)).map((item) => exById[item.exerciseId]?.name).filter(Boolean) as string[] : []
+            return <article key={r.id} className="programCard stack">
+              <div className="row">
+                <div>
+                  <h3>{runDisplayName(r, state.plans, today)}</h3>
+                  <p className="mutedCopy">{today < firstDate ? `Starts ${fmtShort(firstDate)}` : `Week ${currentWeek} of ${totalWeeks}`} · {fmtDateRange(firstDate, lastDate)}</p>
+                </div>
+                <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton" onClick={() => void setRunStatus(r.id, 'completed')}>Mark finished</button><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove this program?', body: 'This removes the program and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove program</button></details>
+              </div>
+              <div className="programProgress">
+                <div className="progressTrack" aria-label={`${progress}% complete`}><div className="progressFill" style={{ width: `${progress}%` }} /></div>
+                <span>{completedDays} of {totalDays} workouts</span>
+              </div>
+              {nextDay ? <button type="button" className="nextWorkoutRow" onClick={() => openDayFromCalendar(nextDay.date)}>
+                <span><span className="fieldLabel">{nextDay.date === today ? 'Today' : 'Next workout'}</span><strong>{nextDay.date === today ? fmtDay(nextDay.date) : fmtDay(nextDay.date)}</strong><span className="mutedCopy">{nextNames.slice(0, 3).join(', ')}{nextNames.length > 3 ? ` +${nextNames.length - 3}` : ''}</span></span>
+                <span aria-hidden="true">›</span>
+              </button> : <p className="mutedCopy">All workouts in this program are done. Mark it finished from the ••• menu.</p>}
+            </article>
+          })}
+        </section>
         <section className="panel stack">
           <div className="row">
             <div><p className="eyebrow">Plans</p><h2>Your plans</h2></div>
@@ -3723,11 +3689,11 @@ export default function App() {
           <div className="stack">
             {state.plans.map((p) => <div key={p.id} className={selectedPlanId === p.id ? 'listItem activeItem planListRow' : 'listItem planListRow'}>
               <button className="planListButton" onClick={() => selectPlan(p.id)}><strong>{p.name}</strong></button>
-              <div className="planListActions">{activePlanIds.has(p.id) && <span className="status activePlanStatus">Active</span>}<button className="pill softActionPill" onClick={() => openPlanScheduler(p.id)} aria-label={`Schedule ${p.name}`}>{activePlanIds.has(p.id) ? 'Schedule next' : 'Schedule'}</button></div>
+              <div className="planListActions">{activePlanIds.has(p.id) && <span className="status activePlanStatus">Active</span>}<button className="pill softActionPill" onClick={() => openPlanScheduler(p.id)} aria-label={`Schedule ${p.name}`}>{activePlanIds.has(p.id) ? 'Run again' : 'Start'}</button></div>
             </div>)}
           </div>
           {applyPlanId && <div className="card stack planSchedulerCard">
-            <div><p className="eyebrow">Schedule plan</p><h3>{planToApply?.name ?? 'Plan'}</h3><p className="mutedCopy">Create independent calendar cycles without changing the reusable plan template.</p></div>
+            <div><p className="eyebrow">Start plan</p><h3>{planToApply?.name ?? 'Plan'}</h3><p className="mutedCopy">Put this plan on your calendar. The plan itself doesn’t change, so you can run it again later.</p></div>
             <div className="scheduleModePicker" role="group" aria-label="Scheduling method">
               <button className={applyScheduleMode === 'cycles' ? 'pill active' : 'pill'} onClick={() => setApplyScheduleMode('cycles')}>Number of cycles</button>
               <button className={applyScheduleMode === 'end-date' ? 'pill active' : 'pill'} onClick={() => setApplyScheduleMode('end-date')}>Through an end date</button>
@@ -3754,29 +3720,8 @@ export default function App() {
               <button className="pill" onClick={() => setApplyPlanId(null)} disabled={applyPlanSaving}>Cancel</button>
             </div>
           </div>}
-          <div className="stack">
-            <div><p className="eyebrow">Active runs</p></div>
-            {activeRuns.length === 0 && <div className="empty compactEmpty">No active runs.</div>}
-            {activeRuns.map((r) => {
-              const linkedPlan = r.planId ? state.plans.find((plan0) => plan0.id === r.planId) : null
-              const runDays = state.schedule.filter((x) => x.runId === r.id)
-              const workoutDays = runDays.filter((day) => day.items.length > 0)
-              const completedDays = workoutDays.filter((day) => day.skipped || day.items.every((item) => item.done)).length
-              const totalDays = workoutDays.length || linkedPlan?.days.filter((day) => day.items.length > 0).length || 0
-              const progress = totalDays ? Math.round((completedDays / totalDays) * 100) : 0
-              return <article key={r.id} className="card stack">
-                <div className="row">
-                  <div><h3>{runDisplayName(r, state.plans, today)}</h3><p>{completedDays} of {totalDays} workouts complete</p></div>
-                  <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton" onClick={() => void setRunStatus(r.id, 'completed')}>Mark completed</button><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove active run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove active run</button></details>
-                </div>
-                <div className="progressTrack" aria-label={`${progress}% complete`}>
-                  <div className="progressFill" style={{ width: `${progress}%` }} />
-                </div>
-              </article>
-            })}
-          </div>
           {completedRuns.length > 0 && <details className="secondaryTools completedRuns">
-            <summary>Completed runs ({completedRuns.length})</summary>
+            <summary>Past programs ({completedRuns.length})</summary>
             <div className="stack completedRunList">
               {completedRuns.map((r) => {
                 const runDays = state.schedule.filter((x) => x.runId === r.id)
@@ -3789,7 +3734,7 @@ export default function App() {
                   </div>
                   <div className="completedRunActions">
                     <button className="pill" onClick={() => void setRunStatus(r.id, 'active')}>Reopen</button>
-                    <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove completed run?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove run</button></details>
+                    <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove past program?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove program</button></details>
                   </div>
                 </article>
               })}
@@ -3895,103 +3840,22 @@ export default function App() {
         </section>}
       </main>}
 
-      {tab === 'progress' && <main className="grid progressGrid">
-        <section className="panel stack progressPickerPanel">
-          <div><p className="eyebrow">Browse</p><h2>All tracked items</h2></div>
-          <div className="stack">
-            {progressExercises.length === 0 && <div className="empty">Complete an exercise or habit to start tracking progress here.</div>}
-            {progressExercises.map((exercise) => <button key={exercise.id} className={selectedProgressExerciseId === exercise.id ? 'listItem activeItem' : 'listItem'} onClick={() => { setSelectedProgressExerciseId(exercise.id); cancelLogEdit() }}><strong>{exercise.name}</strong></button>)}
-          </div>
-        </section>
-        <section className="panel stack progressDetailPanel">
-          {progressExercise ? <>
-          <div className="progressDetailHeader">
-            <div>
-              <p className="eyebrow">{TRACKABLE_KIND_LABEL[progressExercise.kind]} progress</p>
-              <h2>{progressExercise.name}</h2>
-              <p>{progressExercise.category}{progressExercise.equipment ? ` / ${progressExercise.equipment}` : ''}</p>
-            </div>
-            <label className="field progressSelect"><span>View another</span><select value={progressExercise.id} onChange={(event) => { setSelectedProgressExerciseId(event.target.value); cancelLogEdit() }}>{progressExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}</option>)}</select></label>
-          </div>
-          <div className="progressSummaryGrid">
-            <div className="mini">
-              <strong>Tracked by</strong>
-              <span>{PM_LABEL[progressExercise.progressMetric]}</span>
-            </div>
-            <div className="mini">
-              <strong>Last</strong>
-              <span>{progressHistory.length ? metricDisplay(progressExercise.progressMetric, progressHistory[progressHistory.length - 1]) : 'No data yet'}</span>
-            </div>
-            <div className="mini">
-              <strong>PB</strong>
-              <span>{progressHistory.length ? metricDisplay(progressExercise.progressMetric, bestProgressEntry(progressHistory, progressExercise) ?? progressHistory[progressHistory.length - 1]) : 'No data yet'}</span>
-            </div>
-          </div>
-          <div className="stack">
-            <div><p className="eyebrow">Trend</p></div>
-            {progressHistory.length === 0 && <div className="empty">No completed history yet for this item.</div>}
-            {progressHistory.length > 0 && <div className="trendChart">
-              {progressHistory.map((entry) => {
-                const currentMetric = metric(progressExercise.progressMetric, entry)
-                const allValues = progressHistory.map((historyEntry) => metric(progressExercise.progressMetric, historyEntry)).filter((value): value is number => value !== undefined)
-                const maxValue = allValues.length ? Math.max(...allValues) : 1
-                const minValue = allValues.length ? Math.min(...allValues) : 0
-                const range = Math.max(maxValue - minValue, 1)
-                const normalized = currentMetric === undefined ? 0.2 : progressExercise.progressMetric === 'time' ? (maxValue - currentMetric + 1) / (range + 1) : (currentMetric - minValue + 1) / (range + 1)
-                return <div key={entry.id} className="trendBarWrap">
-                  <div className="trendBar" style={{ height: `${Math.max(18, normalized * 96)}px` }} />
-                  <span>{fmtShort(entry.date)}</span>
-                </div>
-              })}
-            </div>}
-          </div>
-          <div className="stack">
-            <div><p className="eyebrow">History</p></div>
-            {progressHistory.length === 0 && <div className="empty">Complete this item to start a history.</div>}
-            {progressHistory.slice().reverse().map((entry) => {
-              const isEditing = editingLogId === entry.id
-              const canOpenDay = !!entry.sourceItemId
-              const entryMetric = effectiveProgressMetric(progressExercise, entry.type)
-              return <div key={entry.id} className="card stack progressHistoryCard">
-                <div className="row top">
-                  <div className="grow">
-                    <strong>{fmtDay(entry.date)}</strong>
-                    <p>{metricDisplay(progressExercise.progressMetric, entry)} | {sum(entry.type, entry.target)}</p>
-                  </div>
-                  <div className="dayRowActions">
-                    {canOpenDay && <button className="iconPill iconTextPill softActionPill" onClick={() => openLogDay(entry)}>Open day</button>}
-                    <button className="iconPill iconTextPill softActionPill" onClick={() => isEditing ? cancelLogEdit() : beginLogEdit(entry)}>{isEditing ? 'Close' : 'Edit'}</button>
-                  </div>
-                </div>
-                {isEditing && <div className="stack compactStack">
-                  {entryMetric === 'time' && <label className="field"><span>Time logged</span><input placeholder="mm:ss or minutes" value={progressEdit.timeText ?? ''} onChange={(e) => setProgressEdit((current) => ({ ...current, timeText: e.target.value, seconds: parseSecs(e.target.value) }))} onBlur={() => setProgressEdit((current) => ({ ...current, timeText: current.seconds !== undefined ? fmtSecs(current.seconds) : current.timeText }))} /></label>}
-                  {entryMetric === 'weight' && <label className="field compactMetricField"><span>Weight used</span><input type="number" min={0} value={numberInputValue(progressEdit.weight)} onChange={(e) => setProgressEdit((current) => ({ ...current, weight: parseNumberInput(e.target.value) }))} /></label>}
-                  {entryMetric === 'count' && <label className="field compactMetricField"><span>Count logged</span><input type="number" min={0} value={numberInputValue(progressEdit.count)} onChange={(e) => setProgressEdit((current) => ({ ...current, count: parseNumberInput(e.target.value) }))} /></label>}
-                  <label className="field"><span>Note</span><input value={progressEdit.note ?? ''} onChange={(e) => setProgressEdit((current) => ({ ...current, note: e.target.value }))} placeholder="Optional note" /></label>
-                  <div className="nav">
-                    <button className="primary" onClick={saveLogEdit}>Save log</button>
-                    <button className="pill" onClick={cancelLogEdit}>Cancel</button>
-                  </div>
-                </div>}
-              </div>
-            })}
-          </div>
-          </> : <div className="empty">No completed item history yet.</div>}
-        </section>
-      </main>}
+      {tab === 'progress' && <ProgressScreen
+        exercises={state.exercises}
+        logs={derivedHistory}
+        schedule={state.schedule}
+        today={today}
+        profile={{ sex: coachProfile.sex ?? undefined, birthYear: coachProfile.birthYear ?? undefined, heightInches: coachProfile.heightInches ?? undefined, equipmentMaxLb: 50 }}
+        bodyweights={bodyweights}
+        onOpenDay={(date) => { openTab('schedule'); focusDay(date) }}
+        onEditProfile={() => { setSettingsSection('profile'); openTab('settings') }}
+      />}
 
-      {tab === 'settings' && <main className="grid">
-        <section className="panel stack">
-          <div><p className="eyebrow">Settings</p><h2>Workspace settings</h2></div>
-          <div className="stack">
-            {([
-              { id: 'data', title: 'Data', detail: 'Reset and manage stored app data.' },
-              { id: 'integrations', title: 'Integrations', detail: 'Connect Health Connect and other data sources.' },
-              { id: 'profile', title: 'Profile', detail: 'Multiple users and personal preferences can live here.' },
-            ] as const).map((section) => <button key={section.id} className={settingsSection === section.id ? 'listItem activeItem settingsNavItem' : 'listItem settingsNavItem'} onClick={() => setSettingsSection(section.id)}>
-              <strong>{section.title}</strong>
-              <span>{section.detail}</span>
-            </button>)}
+      {tab === 'settings' && <main className="stack settingsPage">
+        <section className="pageHeader">
+          <div><p className="eyebrow">Settings</p><h2>Settings</h2></div>
+          <div className="segmented" role="group" aria-label="Settings sections">
+            {([['profile', 'Profile'], ['integrations', 'Connections'], ['data', 'Data']] as const).map(([section, label]) => <button key={section} type="button" className={settingsSection === section ? 'segment active' : 'segment'} aria-pressed={settingsSection === section} onClick={() => setSettingsSection(section)}>{label}</button>)}
           </div>
         </section>
         <section className="panel stack">
@@ -4005,6 +3869,9 @@ export default function App() {
                 <button className="pill" onClick={() => importInputRef.current?.click()}>Import backup</button>
               </div>
             </div>
+            <details className="dangerZone">
+              <summary>Reset options</summary>
+              <div className="stack">
             <div className="card stack">
               <div><strong>Reset progress history</strong><p>This clears completion status, logged times, weights, counts, and progress history while keeping exercises, plans, and the schedule structure.</p></div>
               <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-progress-data', title: 'Reset progress history?', body: 'This clears completion logs, PBs, and checked-off progress across the app.' })}>Reset progress</button>
@@ -4017,6 +3884,8 @@ export default function App() {
               <div><strong>Reset the app</strong><p>This resets the app back to a clean starting state.</p></div>
               <button className="pill dangerPill" onClick={() => setConfirmState({ kind: 'reset-all-data', title: 'Reset all app data?', body: 'This will remove exercises, plans, schedule data, runs, and progress history.' })}>Reset everything</button>
             </div>
+              </div>
+            </details>
           </>}
           {settingsSection === 'integrations' && <div className="stack">
             <div><p className="eyebrow">Integrations</p><h2>Connected services</h2></div>
@@ -4063,108 +3932,33 @@ export default function App() {
             </div>
           </div>}
           {settingsSection === 'profile' && <div className="stack">
-            <div><p className="eyebrow">Profile</p><h2>Account</h2></div>
             <div className="card stack">
-              <strong>Google sign-in</strong>
+              <div><strong>About you</strong><p className="mutedCopy">Used to compare your lifts with norms for people your size and age, and shared with the coach.</p></div>
+              <div className="profileFields">
+                <label className="field"><span>Birth year</span><input type="number" inputMode="numeric" min={1920} max={new Date().getFullYear() - 13} placeholder="e.g. 1984" value={profileDraft.birthYear} onChange={(e) => setProfileDraft((x) => ({ ...x, birthYear: e.target.value }))} /></label>
+                <div className="field"><span>Sex</span><div className="segmented" role="group" aria-label="Sex">
+                  {(['male', 'female'] as const).map((option) => <button key={option} type="button" className={profileDraft.sex === option ? 'segment active' : 'segment'} aria-pressed={profileDraft.sex === option} onClick={() => setProfileDraft((x) => ({ ...x, sex: option }))}>{option === 'male' ? 'Male' : 'Female'}</button>)}
+                </div></div>
+                <div className="field"><span>Height</span><div className="heightInputs">
+                  <label><input type="number" inputMode="numeric" min={3} max={8} value={profileDraft.heightFeet} onChange={(e) => setProfileDraft((x) => ({ ...x, heightFeet: e.target.value }))} aria-label="Height, feet" /><small>ft</small></label>
+                  <label><input type="number" inputMode="numeric" min={0} max={11} value={profileDraft.heightInches} onChange={(e) => setProfileDraft((x) => ({ ...x, heightInches: e.target.value }))} aria-label="Height, inches" /><small>in</small></label>
+                </div></div>
+              </div>
+              <label className="checkRow"><input type="checkbox" checked={profileDraft.powerblockColors} onChange={(e) => setProfileDraft((x) => ({ ...x, powerblockColors: e.target.checked }))} /><span><strong>Show PowerBlock colors</strong><small>A colored dot next to dumbbell exercises shows which rail and adders to use.</small></span></label>
+              <div className="nav"><button className="primary" onClick={() => void saveProfile()} disabled={profileSaving}>{profileSaving ? 'Saving…' : 'Save profile'}</button></div>
+              <p className="mutedCopy">Body weight comes from your weigh-ins (synced or entered on Today).</p>
+            </div>
+            <div className="card stack">
+              <strong>Account</strong>
               <p>{hasSupabaseEnv ? (authLoading ? 'Checking your current session.' : user ? `Signed in as ${user.email ?? 'user'}` : 'Ready for Google sign-in.') : 'Cloudflare authentication is not configured for this build.'}</p>
               {hasSupabaseEnv && <div className="nav">
                 {!user && !authLoading && <button className="primary" onClick={signInWithGoogle}>Continue with Google</button>}
                 {user && <button className="pill dangerPill" onClick={signOut}>Sign out</button>}
               </div>}
             </div>
-            <div className="card stack">
-              <strong>Multiple users</strong>
-              <p>If you add household profiles later, this section is ready for it.</p>
-            </div>
-            <div className="card stack">
-              <strong>Personal preferences</strong>
-              <p>Defaults like units, encouragement style, and reminder behaviors can live here.</p>
-            </div>
           </div>}
         </section>
       </main>}
     </div>
-  )
-}
-
-function Sheet({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode }) {
-  const panelRef = useRef<HTMLDivElement>(null)
-  const closeRef = useRef(onClose)
-  useEffect(() => {
-    closeRef.current = onClose
-  })
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    panelRef.current?.focus()
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeRef.current()
-    }
-    window.addEventListener('keydown', onKey)
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = previousOverflow
-      previousFocus?.focus()
-    }
-  }, [])
-  return <div className="overlay sheetOverlay" onClick={() => closeRef.current()}>
-    <div ref={panelRef} className="sheet" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
-      <div className="sheetHeader">
-        <div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div>
-        <button type="button" className="iconPill sheetClose" onClick={() => closeRef.current()} aria-label="Close">×</button>
-      </div>
-      <div className="sheetBody">{children}</div>
-    </div>
-  </div>
-}
-
-function minutesValue(seconds?: number) {
-  return seconds === undefined ? '' : String(Math.round((seconds / 60) * 100) / 100)
-}
-
-function TargetEditor({ type, target, onChange, actions, layout = 'default', durationIn = 'seconds' }: { type: TT; target: Target; onChange: (t: Target) => void; actions?: ReactNode; layout?: 'default' | 'detail'; durationIn?: 'seconds' | 'minutes' }) {
-  if (type === 'count') {
-    const fields = <div className="countTargetFields"><label className={`field ${layout === 'detail' ? 'compactMetricField compactControl' : 'grow'}`}><span>Target count</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ ...target, count: parseNumberInput(e.target.value) })} /></label><label className={`field countUnitField ${layout === 'detail' ? 'compactControl' : ''}`}><span>Count as</span><select value={target.countUnit ?? 'reps'} onChange={(e) => onChange({ ...target, countUnit: e.target.value as CountUnit })}><option value="reps">Reps</option><option value="steps">Steps</option></select></label></div>
-    return <div className="targetRow">{fields}{actions}</div>
-  }
-  if (type === 'sets') {
-    if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetInline"><div className="split compactSplit"><label className="field"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label></div>{actions}</div>
-  }
-  if (type === 'duration' && durationIn === 'minutes') {
-    const input = <input type="number" min={1} step="any" inputMode="decimal" value={minutesValue(target.seconds)} onChange={(e) => {
-      const minutes = parseNumberInput(e.target.value)
-      onChange({ seconds: minutes === undefined ? undefined : Math.round(minutes * 60) })
-    }} />
-    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Minutes</span>{input}</label>{actions}</div>
-    return <div className="targetRow"><label className="field grow"><span>Target minutes</span>{input}</label>{actions}</div>
-  }
-  if (type === 'duration') {
-    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Seconds</span><input type="number" min={10} value={numberInputValue(target.seconds)} onChange={(e) => onChange({ seconds: parseNumberInput(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetRow"><label className="field grow"><span>Target duration in seconds</span><input type="number" min={10} value={numberInputValue(target.seconds)} onChange={(e) => onChange({ seconds: parseNumberInput(e.target.value) })} /></label>{actions}</div>
-  }
-  if (type === 'distance') {
-    if (layout === 'detail') {
-      return <div className="targetInline"><div className="detailDistanceFields"><label className="field compactMetricField compactControl"><span>Distance</span><input type="number" min={0} step="0.1" value={numberInputValue(target.distance)} onChange={(e) => onChange({ ...target, distance: parseNumberInput(e.target.value) })} /></label><label className="field compactField compactControl"><span>Unit</span><select value={target.unit ?? 'mi'} onChange={(e) => onChange({ ...target, unit: e.target.value as 'mi' | 'km' })}><option value="mi">Miles</option><option value="km">Kilometers</option></select></label></div>{actions}</div>
-    }
-    return <div className="targetInline"><div className="split compactSplit"><label className="field"><span>Distance</span><input type="number" min={0} step="0.1" value={numberInputValue(target.distance)} onChange={(e) => onChange({ ...target, distance: parseNumberInput(e.target.value) })} /></label><label className="field compactField"><span>Unit</span><select value={target.unit ?? 'mi'} onChange={(e) => onChange({ ...target, unit: e.target.value as 'mi' | 'km' })}><option value="mi">Miles</option><option value="km">Kilometers</option></select></label></div>{actions}</div>
-  }
-  if (type === 'for-time') {
-    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Fixed reps</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
-    return <div className="targetRow"><label className="field grow"><span>Fixed reps</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ count: parseNumberInput(e.target.value) })} /></label>{actions}</div>
-  }
-  if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Weight</span><input type="number" min={0} value={numberInputValue(target.weight)} onChange={(e) => onChange({ ...target, weight: parseNumberInput(e.target.value) })} /></label>{actions}</div>
-  return <div className="targetInline"><div className="split threeUp"><label className="field"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label><label className="field"><span>Weight</span><input type="number" min={0} value={numberInputValue(target.weight)} onChange={(e) => onChange({ ...target, weight: parseNumberInput(e.target.value) })} /></label></div>{actions}</div>
-}
-
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 7h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="M9.5 4h5l1 2h-7l1-2Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M7.5 7l.7 11a2 2 0 0 0 2 1.9h3.6a2 2 0 0 0 2-1.9L16.5 7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 10.5v5.5M14 10.5v5.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
   )
 }

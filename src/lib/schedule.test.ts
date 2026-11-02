@@ -104,10 +104,10 @@ describe('habitStats', () => {
     expect(habitStats([1, 3, 5], done, '2026-11-03').streak).toBe(3)
   })
 
-  it('tallies the current Sunday-to-Saturday week', () => {
+  it('tallies this Sunday-to-Saturday week up to today', () => {
     // Sunday isn't a scheduled day for a Mon/Wed/Fri habit, so only Monday counts
     const done = new Set(['2026-11-01', '2026-11-02'])
-    expect(habitStats([1, 3, 5], done, '2026-11-02')).toMatchObject({ weekDone: 1, weekDue: 3 })
+    expect(habitStats([1, 3, 5], done, '2026-11-02')).toMatchObject({ weekDone: 1, weekDue: 1 })
   })
 })
 

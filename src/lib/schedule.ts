@@ -113,7 +113,7 @@ function shiftDate(date: string, days: number) {
 }
 
 /**
- * Streak and weekly tally for a recurring habit.
+ * Streak and this week's tally (due days up to today) for a recurring habit.
  * `doneDates` are dates the habit was completed. Today only counts toward the streak once it's done,
  * so an unfinished today doesn't break a running streak.
  */
@@ -136,7 +136,8 @@ export function habitStats(weekdays: number[] | undefined, doneDates: Set<string
     const sunday = shiftDate(today, -new Date(Date.UTC(year, month - 1, day)).getUTCDay())
     for (let i = 0; i < 7; i += 1) {
       const date = shiftDate(sunday, i)
-      if (!isDueOn(weekdays, date)) continue
+      // Count only days so far, so Monday morning doesn't read as "1 of 7".
+      if (date > today || !isDueOn(weekdays, date)) continue
       weekDue += 1
       if (doneDates.has(date)) weekDone += 1
     }
