@@ -151,9 +151,9 @@ const TABLES = {
     ownerColumn: 'user_id',
     columns: {
       id: 'text', user_id: 'text', goal_name: 'text', start_weight_lb: 'number', height_inches: 'number', target_weight_lb: 'number', desired_loss_min_lb: 'number',
-      desired_loss_max_lb: 'number', targets: 'json', equipment: 'text', calorie_context: 'text', coaching_style: 'json', birth_year: 'integer', sex: 'text', powerblock_colors: 'boolean', created_at: 'text', updated_at: 'text',
+      desired_loss_max_lb: 'number', targets: 'json', equipment: 'text', calorie_context: 'text', coaching_style: 'json', birth_year: 'integer', sex: 'text', powerblock_colors: 'boolean', training_since: 'text', created_at: 'text', updated_at: 'text',
     },
-    writable: ['id', 'user_id', 'goal_name', 'start_weight_lb', 'height_inches', 'target_weight_lb', 'desired_loss_min_lb', 'desired_loss_max_lb', 'targets', 'equipment', 'calorie_context', 'coaching_style', 'birth_year', 'sex', 'powerblock_colors'],
+    writable: ['id', 'user_id', 'goal_name', 'start_weight_lb', 'height_inches', 'target_weight_lb', 'desired_loss_min_lb', 'desired_loss_max_lb', 'targets', 'equipment', 'calorie_context', 'coaching_style', 'birth_year', 'sex', 'powerblock_colors', 'training_since'],
   },
   coaching_notes: {
     ownerColumn: 'user_id',

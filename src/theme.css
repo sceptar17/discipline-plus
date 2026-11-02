@@ -986,3 +986,8 @@ textarea { font: inherit; }
   .powerBlockDot { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px rgb(255 255 255 / 0.4); }
   .normTick { background: var(--panel); }
 }
+
+/* Norm meter: level names sit under their boundaries. */
+.normScale { position: relative; display: block; height: 14px; }
+.normScale span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.normScale span:first-child { transform: translateX(-30%); }

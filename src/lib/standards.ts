@@ -123,8 +123,22 @@ export function thresholdsFor(id: StandardId, sex: Sex, bodyweight: number, age?
 export type NormResult = {
   percentile: number
   level: string
+  /** -1 below Beginner, 0 Beginner … 4 Elite. */
+  levelIndex: number
   next?: { level: string; value: number }
 }
+
+// Strength Level describes its levels by training age: Beginner ≈ practiced a month, Novice ≈ six months of
+// regular training, Intermediate ≈ two years, Advanced ≈ five years. Use that to set what's expected.
+export function expectedLevelIndex(trainingMonths: number | undefined) {
+  if (trainingMonths === undefined) return 1
+  if (trainingMonths < 6) return 0
+  if (trainingMonths < 24) return 1
+  if (trainingMonths < 60) return 2
+  return 3
+}
+
+export const LEVEL_MEANING = ['about a month of practice', 'about six months of regular training', 'about two years of regular training', 'five-plus years of progress', 'competitive strength athletes'] as const
 
 /** Where a value sits against the thresholds, as an approximate percentile of logged lifters. */
 export function compareToNorm(id: StandardId, value: number, sex: Sex, bodyweight: number, age?: number): NormResult {
@@ -145,6 +159,7 @@ export function compareToNorm(id: StandardId, value: number, sex: Sex, bodyweigh
   return {
     percentile: Math.round(Math.max(0, percentile)),
     level: levelIndex < 0 ? 'Below beginner' : LEVEL_NAMES[levelIndex],
+    levelIndex,
     next: nextIndex < LEVEL_NAMES.length ? { level: LEVEL_NAMES[nextIndex], value: thresholds[nextIndex] } : undefined,
   }
 }

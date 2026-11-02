@@ -1,6 +1,6 @@
 // Overall progress: per-lift strength trends, pace, and how each lift compares with norms.
 import { dateOrdinal } from './format'
-import { compareToNorm, estimatedOneRepMax, pushUpRating, standardForExercise, STANDARDS, type Sex, type StandardId } from './standards'
+import { compareToNorm, estimatedOneRepMax, expectedLevelIndex, LEVEL_NAMES, pushUpRating, standardForExercise, STANDARDS, type Sex, type StandardId } from './standards'
 import type { Day, Exercise, Log } from '../types'
 
 export type Pace = 'fast' | 'steady' | 'flat' | 'slipping' | 'new'
@@ -8,7 +8,7 @@ export type LiftMeasure = 'e1rm' | 'reps' | 'seconds'
 export type LiftPoint = { date: string; value: number; weight?: number; reps?: number }
 
 export type LiftNorm =
-  | { kind: 'percentile'; standard: StandardId; standardLabel: string; percentile: number; level: string; below: boolean; next?: { level: string; value: number } }
+  | { kind: 'percentile'; standard: StandardId; standardLabel: string; percentile: number; level: string; levelIndex: number; expectedLevel: string; below: boolean; next?: { level: string; value: number } }
   | { kind: 'pushups'; rating: string; below: boolean; averageAt: number; next?: { rating: string; reps: number } }
 
 export type LiftSummary = {
@@ -29,7 +29,7 @@ export type LiftSummary = {
   roughEstimate: boolean
 }
 
-export type ProgressProfile = { sex?: Sex; age?: number; bodyweight?: number; equipmentMaxLb?: number }
+export type ProgressProfile = { sex?: Sex; age?: number; bodyweight?: number; equipmentMaxLb?: number; trainingMonths?: number }
 
 export type OverallSummary = {
   lifts: LiftSummary[]
@@ -146,7 +146,9 @@ function summarizeLift(exercise: Exercise, logs: Log[], today: string, windowSta
       const expected = STANDARDS[standard].unit === 'reps' ? 'reps' : 'e1rm'
       if (measure === expected) {
         const result = compareToNorm(standard, current, profile.sex, profile.bodyweight, profile.age)
-        norm = { kind: 'percentile', standard, standardLabel: STANDARDS[standard].label, percentile: result.percentile, level: result.level, below: result.percentile < 20, next: result.next }
+        const expected = expectedLevelIndex(profile.trainingMonths)
+        // "Below norm" means behind the level typical for how long you've been training, not behind lifters in general.
+        norm = { kind: 'percentile', standard, standardLabel: STANDARDS[standard].label, percentile: result.percentile, level: result.level, levelIndex: result.levelIndex, expectedLevel: LEVEL_NAMES[expected], below: result.levelIndex < expected, next: result.next }
       }
     }
   }
@@ -159,7 +161,7 @@ function summarizeLift(exercise: Exercise, logs: Log[], today: string, windowSta
   if (pace === 'slipping' && changePct !== undefined && weeksMeasured !== undefined) {
     focusReason = `Down ${Math.abs(changePct).toFixed(0)}% over ${Math.round(weeksMeasured)} week${Math.round(weeksMeasured) === 1 ? '' : 's'}.`
   } else if (norm?.below && pace !== 'fast') {
-    focusReason = 'Below the norm for your size and age, and not closing the gap quickly.'
+    focusReason = norm.kind === 'percentile' ? `Below ${norm.expectedLevel} level, which is typical for how long you’ve trained, and not closing the gap quickly.` : 'Below average for your age, and not closing the gap quickly.'
   } else if (atEquipmentMax && (pace === 'flat' || pace === 'slipping')) {
     focusReason = `At your ${equipmentMax} lb max — progress by adding reps or slowing the tempo.`
   }

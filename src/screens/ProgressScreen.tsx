@@ -3,10 +3,10 @@ import { LineChart } from '../components/LineChart'
 import { Sheet } from '../components/Sheet'
 import { fmtSecs, fmtShort } from '../lib/format'
 import { PACE_LABEL, summarizeProgress, verdictCopy, type LiftMeasure, type LiftSummary, type Pace } from '../lib/progress'
-import { thresholdsFor, type Sex } from '../lib/standards'
+import { expectedLevelIndex, LEVEL_MEANING, LEVEL_NAMES, thresholdsFor, type Sex } from '../lib/standards'
 import type { Day, Exercise, Log } from '../types'
 
-export type ProgressProfileInput = { sex?: Sex; birthYear?: number; heightInches?: number; equipmentMaxLb?: number }
+export type ProgressProfileInput = { sex?: Sex; birthYear?: number; heightInches?: number; equipmentMaxLb?: number; trainingSince?: string }
 
 type Props = {
   exercises: Exercise[]
@@ -43,14 +43,30 @@ function ChangeChip({ lift }: { lift: LiftSummary }) {
   </span>
 }
 
-function NormMeter({ percentile }: { percentile: number }) {
+// Level boundaries sit at these percentiles of logged lifters.
+const LEVEL_PERCENTILE = [5, 20, 50, 80, 95]
+
+function NormMeter({ percentile, below, expectedIndex }: { percentile: number; below: boolean; expectedIndex: number }) {
+  const expectedAt = LEVEL_PERCENTILE[expectedIndex]
   return <div className="normMeter" role="img" aria-label={`Stronger than about ${percentile}% of logged lifters`}>
-    <div className="normTrack">
-      {[20, 50, 80].map((tick) => <span key={tick} className="normTick" style={{ left: `${tick}%` }} />)}
-      <span className={percentile < 20 ? 'normMarker below' : 'normMarker'} style={{ left: `${Math.min(98, Math.max(2, percentile))}%` }} />
+    <div className="normTrack" style={{ background: `linear-gradient(90deg, var(--warn-tint) 0 ${expectedAt}%, var(--surface-strong) ${expectedAt}% 100%)` }}>
+      {LEVEL_PERCENTILE.slice(1, 4).map((tick) => <span key={tick} className="normTick" style={{ left: `${tick}%` }} />)}
+      <span className={below ? 'normMarker below' : 'normMarker'} style={{ left: `${Math.min(98, Math.max(2, percentile))}%` }} />
     </div>
-    <div className="normScale" aria-hidden="true"><span>Beginner</span><span>Typical</span><span>Strong</span></div>
+    <div className="normScale" aria-hidden="true">
+      {[1, 2, 3].map((index) => <span key={index} style={{ left: `${LEVEL_PERCENTILE[index]}%` }}>{LEVEL_NAMES[index]}</span>)}
+    </div>
   </div>
+}
+
+function monthsBetween(from: string, to: string) {
+  return (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + (Number(to.slice(5, 7)) - Number(from.slice(5, 7))) + (Number(to.slice(8, 10) || 1) - Number(from.slice(8, 10) || 1)) / 30
+}
+
+function trainingTimeLabel(months: number) {
+  if (months < 1.5) return 'a few weeks'
+  if (months < 24) return `about ${Math.round(months)} months`
+  return `about ${Math.round(months / 12)} years`
 }
 
 export function ProgressScreen({ exercises, logs, schedule, today, profile, bodyweights, onOpenDay, onEditProfile }: Props) {
@@ -58,15 +74,21 @@ export function ProgressScreen({ exercises, logs, schedule, today, profile, body
   const [openLiftId, setOpenLiftId] = useState<string | null>(null)
   const latestBodyweight = bodyweights.length ? [...bodyweights].sort((a, b) => a.date.localeCompare(b.date))[bodyweights.length - 1].weight : undefined
   const age = profile.birthYear ? Number(today.slice(0, 4)) - profile.birthYear : undefined
+  const exerciseIds = useMemo(() => new Set(exercises.filter((exercise) => exercise.kind === 'exercise').map((exercise) => exercise.id)), [exercises])
+  const firstLiftDate = useMemo(() => logs.filter((entry) => exerciseIds.has(entry.exerciseId)).reduce<string | undefined>((first, entry) => (!first || entry.date < first ? entry.date : first), undefined), [logs, exerciseIds])
+  // How long you've been lifting: your "Lifting since" if set, otherwise your first logged workout.
+  const trainingStart = profile.trainingSince ? `${profile.trainingSince}-01` : firstLiftDate
+  const trainingMonths = trainingStart ? Math.max(0, monthsBetween(trainingStart, today)) : undefined
+  const expectedIndex = expectedLevelIndex(trainingMonths)
   const summary = useMemo(() => summarizeProgress({
     exercises,
     logs,
     schedule,
     today,
     windowWeeks,
-    profile: { sex: profile.sex, age, bodyweight: latestBodyweight, equipmentMaxLb: profile.equipmentMaxLb },
+    profile: { sex: profile.sex, age, bodyweight: latestBodyweight, equipmentMaxLb: profile.equipmentMaxLb, trainingMonths },
     bodyweights,
-  }), [exercises, logs, schedule, today, windowWeeks, profile.sex, profile.equipmentMaxLb, age, latestBodyweight, bodyweights])
+  }), [exercises, logs, schedule, today, windowWeeks, profile.sex, profile.equipmentMaxLb, age, latestBodyweight, bodyweights, trainingMonths])
   const copy = verdictCopy(summary, windowWeeks)
   const normsReady = Boolean(profile.sex && age && latestBodyweight)
   const withNorms = summary.lifts.filter((lift) => lift.norm).sort((a, b) => normScore(a) - normScore(b))
@@ -113,7 +135,7 @@ export function ProgressScreen({ exercises, logs, schedule, today, profile, body
     </section>}
 
     <section className="panel stack">
-      <div><p className="eyebrow">Against the norm</p><h3>How you compare</h3><p className="mutedCopy">People your size{age ? ' and age' : ''} who log their lifts. That group skews stronger than average, so “typical” here is a fair bar, not a low one.</p></div>
+      <div><p className="eyebrow">Against the norm</p><h3>How you compare</h3><p className="mutedCopy">Per dumbbell, against people your size{age ? ' and age' : ''} who log their lifts. Those levels follow training time: Novice is {LEVEL_MEANING[1]}, Intermediate {LEVEL_MEANING[2]}.{trainingMonths !== undefined ? <> With {trainingTimeLabel(trainingMonths)} of lifting, <strong>{LEVEL_NAMES[expectedIndex]}</strong> is on track{profile.trainingSince ? '' : <> (from your first logged workout — <button type="button" className="textButton inlineTextButton" onClick={onEditProfile}>set Lifting since</button> if you trained before)</>}.</> : null}</p></div>
       {!normsReady ? <div className="noticeCard">
         <p>{!profile.sex || !age ? 'Add your age and sex in your profile to compare your lifts with norms.' : 'Log a body weight (or sync it from your phone) to compare your lifts with norms.'}</p>
         {(!profile.sex || !age) && <button type="button" className="pill" onClick={onEditProfile}>Open profile</button>}
@@ -124,8 +146,8 @@ export function ProgressScreen({ exercises, logs, schedule, today, profile, body
             {lift.norm?.below && <span className="statusLabel warn"><span aria-hidden="true">!</span> Below norm</span>}
           </div>
           {lift.norm?.kind === 'percentile' ? <>
-            <NormMeter percentile={lift.norm.percentile} />
-            <span className="normCaption">Stronger than about {lift.norm.percentile}% · {lift.norm.level}{lift.norm.next ? ` · ${lift.norm.next.level} at ≈${Math.round(lift.norm.next.value)} ${lift.measure === 'reps' ? 'reps' : 'lb'}` : ''}</span>
+            <NormMeter percentile={lift.norm.percentile} below={lift.norm.below} expectedIndex={expectedIndex} />
+            <span className="normCaption"><strong>{lift.norm.level}</strong>{lift.norm.levelIndex >= 0 ? ` (${LEVEL_MEANING[lift.norm.levelIndex]})` : ''} · stronger than about {lift.norm.percentile}% of logged lifters{lift.norm.next ? ` · ${lift.norm.next.level} at ≈${Math.round(lift.norm.next.value)} ${lift.measure === 'reps' ? 'reps' : 'lb'}` : ''}</span>
           </> : lift.norm?.kind === 'pushups' ? <span className="normCaption">{Math.round(lift.current)} in a set · <strong>{lift.norm.rating}</strong> for your age{lift.norm.next ? ` · ${lift.norm.next.rating} at ${lift.norm.next.reps}` : ''}</span> : null}
         </button>)}
       </div>}
@@ -163,7 +185,7 @@ export function ProgressScreen({ exercises, logs, schedule, today, profile, body
         <li>For weighted lifts, each session’s best set is turned into an estimated one-rep max (weight × (1 + reps ÷ 30)). Above about 12 reps the estimate gets rough, so those are marked.</li>
         <li>Pace compares your best recent sessions with where you were at the start of the window. As a rough guide, lifts climb several percent a week early in training, closer to 0.5–1% a week after the first few months, and only a few percent a year for experienced lifters.</li>
         <li>Norms come from <a href="https://strengthlevel.com/strength-standards" target="_blank" rel="noreferrer">Strength Level</a>’s community data (per dumbbell, by body weight and sex). Floor press is compared with bench press, and hammer curls with curls. After 40 they’re lowered about 1% a year, a common working assumption for age. Push-ups use <a href="https://www.topendsports.com/testing/tests/push-up.htm" target="_blank" rel="noreferrer">ACSM-based norms by age</a>.</li>
-        <li>“Below norm” means weaker than about 80% of people your size who log the lift. If a lift is below norm and not climbing quickly, it shows up under Where to focus.</li>
+        <li>Levels are one-rep maxes per dumbbell from people who log lifts on Strength Level, a trained and motivated crowd. Their levels follow training time (Novice ≈ six months, Intermediate ≈ two years, Advanced ≈ five years), so “Below norm” only shows when a lift is under the level typical for how long you’ve been lifting. If it’s also not climbing quickly, it shows up under Where to focus.</li>
       </ul>
     </details>
 
@@ -185,7 +207,7 @@ function LiftDetail({ lift, profile, onOpenDay }: { lift: LiftSummary; profile: 
         const thresholds = thresholdsFor(lift.norm.standard, profile.sex, profile.bodyweight, profile.age)
         const values = lift.points.map((point) => point.value)
         const top = Math.max(...values) * 1.6
-        return [{ value: thresholds[1], label: 'Novice' }, { value: thresholds[2], label: 'Typical' }, { value: thresholds[3], label: 'Advanced' }].filter((ref) => ref.value <= top)
+        return [{ value: thresholds[1], label: 'Novice' }, { value: thresholds[2], label: 'Intermediate' }, { value: thresholds[3], label: 'Advanced' }].filter((ref) => ref.value <= top)
       })()
     : []
   const recent = [...lift.points].reverse().slice(0, 8)

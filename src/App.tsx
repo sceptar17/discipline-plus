@@ -16,15 +16,16 @@ import { TargetEditor } from './components/TargetEditor'
 import { TrashIcon } from './components/icons'
 import type { TK, TT, RM, PM, EffortRating, DaySection, Target, Result, Exercise, Item, Day, PlanDay, Plan, RunStatus, Run, Log, LegacyHist, LegacyItem, LegacyState, State, ExerciseForm, PlanForm, PlanScheduleMode, PlanTargetMode, PlanCyclePreview, PlanSchedulePreview, RemovedItem, UndoActions, Toast, ScheduleSaveStatus, ItemDraft, DailyHealthDraft, MobilePairing, MobileSyncStatus, ExerciseRecommendation, DailyReview, CoachMessage, ProgramCoachMessage, WorkbookPreview, ImportedAnalysisItem, ImportedAnalysisDay, ImportedPlanAnalysis, ExerciseEditorMode, ScheduleTouchDrag, ScheduleMoveTarget, ConfirmState } from './types'
 
-type CoachProfile = { birthYear: number | null; sex: Sex | null; heightInches: number | null; powerblockColors: boolean }
-type ProfileDraft = { birthYear: string; sex: '' | Sex; heightFeet: string; heightInches: string; powerblockColors: boolean }
-const EMPTY_COACH_PROFILE: CoachProfile = { birthYear: null, sex: null, heightInches: null, powerblockColors: true }
+type CoachProfile = { birthYear: number | null; sex: Sex | null; heightInches: number | null; powerblockColors: boolean; trainingSince: string | null }
+type ProfileDraft = { birthYear: string; sex: '' | Sex; heightFeet: string; heightInches: string; powerblockColors: boolean; trainingSince: string }
+const EMPTY_COACH_PROFILE: CoachProfile = { birthYear: null, sex: null, heightInches: null, powerblockColors: true, trainingSince: null }
 const profileDraftFrom = (profile: CoachProfile): ProfileDraft => ({
   birthYear: profile.birthYear ? String(profile.birthYear) : '',
   sex: profile.sex ?? '',
   heightFeet: profile.heightInches ? String(Math.floor(profile.heightInches / 12)) : '',
   heightInches: profile.heightInches ? String(Math.round(profile.heightInches % 12)) : '',
   powerblockColors: profile.powerblockColors,
+  trainingSince: profile.trainingSince ?? '',
 })
 
 const KEY = 'fitness-tracker-v1'
@@ -1165,16 +1166,17 @@ export default function App() {
     let active = true
     const client = supabase
     const loadCoachProfile = async () => {
-      let { data, error } = await client.from('coaching_profiles').select('birth_year, sex, height_inches, powerblock_colors').eq('user_id', user.id)
+      let { data, error } = await client.from('coaching_profiles').select('birth_year, sex, height_inches, powerblock_colors, training_since').eq('user_id', user.id)
       // Before the API knows the new profile columns, fall back to what it has.
       if (error) ({ data, error } = await client.from('coaching_profiles').select('height_inches').eq('user_id', user.id))
       if (!active || error) return
-      const row = (data?.[0] ?? {}) as { birth_year?: number | null; sex?: string | null; height_inches?: number | null; powerblock_colors?: boolean | null }
+      const row = (data?.[0] ?? {}) as { birth_year?: number | null; sex?: string | null; height_inches?: number | null; powerblock_colors?: boolean | null; training_since?: string | null }
       const next: CoachProfile = {
         birthYear: typeof row.birth_year === 'number' ? row.birth_year : null,
         sex: row.sex === 'male' || row.sex === 'female' ? row.sex : null,
         heightInches: typeof row.height_inches === 'number' ? row.height_inches : null,
         powerblockColors: row.powerblock_colors !== false,
+        trainingSince: typeof row.training_since === 'string' && /^\d{4}-\d{2}$/.test(row.training_since) ? row.training_since : null,
       }
       setCoachProfile(next)
       setProfileDraft(profileDraftFrom(next))
@@ -2438,6 +2440,11 @@ export default function App() {
       pushToast('Check the height.')
       return
     }
+    const trainingSince = /^\d{4}-\d{2}$/.test(profileDraft.trainingSince) ? profileDraft.trainingSince : null
+    if (trainingSince && trainingSince > today.slice(0, 7)) {
+      pushToast('Lifting since can’t be in the future.')
+      return
+    }
     setProfileSaving(true)
     // The table requires goal_name on every write (NOT NULL is checked before an upsert updates), so carry the current one along.
     const { data: existingRows } = await supabase.from('coaching_profiles').select('id, goal_name').eq('user_id', user.id)
@@ -2450,13 +2457,14 @@ export default function App() {
       sex: profileDraft.sex || null,
       height_inches: heightInches,
       powerblock_colors: profileDraft.powerblockColors,
+      training_since: trainingSince,
     })
     setProfileSaving(false)
     if (error) {
       pushToast('Could not save your profile.')
       return
     }
-    const next: CoachProfile = { birthYear, sex: profileDraft.sex || null, heightInches, powerblockColors: profileDraft.powerblockColors }
+    const next: CoachProfile = { birthYear, sex: profileDraft.sex || null, heightInches, powerblockColors: profileDraft.powerblockColors, trainingSince }
     setCoachProfile(next)
     setProfileDraft(profileDraftFrom(next))
     pushToast('Profile saved.')
@@ -3864,7 +3872,7 @@ export default function App() {
         logs={derivedHistory}
         schedule={state.schedule}
         today={today}
-        profile={{ sex: coachProfile.sex ?? undefined, birthYear: coachProfile.birthYear ?? undefined, heightInches: coachProfile.heightInches ?? undefined, equipmentMaxLb: 50 }}
+        profile={{ sex: coachProfile.sex ?? undefined, birthYear: coachProfile.birthYear ?? undefined, heightInches: coachProfile.heightInches ?? undefined, equipmentMaxLb: 50, trainingSince: coachProfile.trainingSince ?? undefined }}
         bodyweights={bodyweights}
         onOpenDay={(date) => { openTab('schedule'); focusDay(date) }}
         onEditProfile={() => { setSettingsSection('profile'); openTab('settings') }}
@@ -3963,6 +3971,7 @@ export default function App() {
                   <label><input type="number" inputMode="numeric" min={0} max={11} value={profileDraft.heightInches} onChange={(e) => setProfileDraft((x) => ({ ...x, heightInches: e.target.value }))} aria-label="Height, inches" /><small>in</small></label>
                 </div></div>
               </div>
+              <label className="field"><span>Lifting since <small className="mutedCopy">(optional)</small></span><input type="month" max={today.slice(0, 7)} value={profileDraft.trainingSince} onChange={(e) => setProfileDraft((x) => ({ ...x, trainingSince: e.target.value }))} /><small className="mutedCopy">Sets which strength level is on track for you. Leave blank to use your first logged workout.</small></label>
               <label className="checkRow"><input type="checkbox" checked={profileDraft.powerblockColors} onChange={(e) => setProfileDraft((x) => ({ ...x, powerblockColors: e.target.checked }))} /><span><strong>Show PowerBlock colors</strong><small>A colored dot next to dumbbell exercises shows which rail and adders to use.</small></span></label>
               <div className="nav"><button className="primary" onClick={() => void saveProfile()} disabled={profileSaving}>{profileSaving ? 'Saving…' : 'Save profile'}</button></div>
               <p className="mutedCopy">Body weight comes from your weigh-ins (synced or entered on Today).</p>
