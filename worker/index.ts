@@ -87,9 +87,9 @@ const TABLES = {
     ownerColumn: 'user_id',
     columns: {
       id: 'text', user_id: 'text', kind: 'text', name: 'text', category: 'text', equipment: 'text', notes: 'text',
-      default_type: 'text', allowed: 'json', target: 'json', refs: 'json', progress_metric: 'text', created_at: 'text', updated_at: 'text',
+      default_type: 'text', allowed: 'json', target: 'json', refs: 'json', progress_metric: 'text', repeat_days: 'json', created_at: 'text', updated_at: 'text',
     },
-    writable: ['id', 'user_id', 'kind', 'name', 'category', 'equipment', 'notes', 'default_type', 'allowed', 'target', 'refs', 'progress_metric'],
+    writable: ['id', 'user_id', 'kind', 'name', 'category', 'equipment', 'notes', 'default_type', 'allowed', 'target', 'refs', 'progress_metric', 'repeat_days'],
   },
   plans: {
     ownerColumn: 'user_id',

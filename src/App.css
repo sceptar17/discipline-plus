@@ -2614,3 +2614,7 @@ textarea:focus-visible {
     transform: none;
   }
 }
+
+.repeatDaysField .mutedCopy {
+  margin-top: 0.5rem;
+}
