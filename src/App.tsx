@@ -490,14 +490,10 @@ function continuedTargetFromLatest(history: Log[], exercise: Exercise, type: TT,
 
   const next = clone(fallback)
   if (type === 'sets' || type === 'weighted') {
+    // Keep the latest session's sets × reps target (not the weakest set) at the latest weight used.
     const completedSets = source.result.sets?.filter((set) => Number.isInteger(set.reps) && set.reps > 0) ?? []
-    if (completedSets.length) {
-      next.sets = completedSets.length
-      next.reps = Math.min(...completedSets.map((set) => set.reps))
-    } else {
-      if (source.target.sets !== undefined) next.sets = source.target.sets
-      if (source.target.reps !== undefined) next.reps = source.target.reps
-    }
+    next.sets = source.target.sets ?? (completedSets.length || next.sets)
+    next.reps = source.target.reps ?? (completedSets.length ? Math.max(...completedSets.map((set) => set.reps)) : next.reps)
     const latestWeight = source.result.weight
       ?? source.result.sets?.map((set) => set.weight).find((weight): weight is number => weight !== undefined)
       ?? source.target.weight
