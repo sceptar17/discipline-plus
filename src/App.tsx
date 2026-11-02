@@ -34,7 +34,14 @@ type PlanScheduleMode = 'cycles' | 'end-date'
 type PlanTargetMode = 'latest' | 'template'
 type PlanCyclePreview = { cycleNumber: number; startDate: string; endDate: string; days: Array<{ date: string; dayNo: number; planDay: PlanDay }> }
 type PlanSchedulePreview = { cycles: PlanCyclePreview[]; dates: string[]; conflicts: string[]; startDate: string; endDate: string; totalDays: number; error: string }
-type Toast = { id: string; message: string }
+type RemovedItem = { item: Item; index: number; log?: Log }
+type UndoActions = {
+  restoreItem: (date: string, removed: RemovedItem) => Promise<unknown>
+  putItem: (date: string, item: Item) => Promise<unknown>
+  removeItem: (date: string, itemId: string) => Promise<unknown>
+  swapDays: (sourceDate: string, targetDate: string, quiet?: boolean) => Promise<unknown>
+}
+type Toast = { id: string; message: string; createdAt: number; action?: { label: string; run: () => void } }
 type ScheduleSaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
 type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
@@ -1183,6 +1190,8 @@ export default function App() {
   const [applyPlanSaving, setApplyPlanSaving] = useState(false)
   const [keepCompletedPlanDays, setKeepCompletedPlanDays] = useState(true)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [daySheet, setDaySheet] = useState<null | { mode: 'add'; kind: TK } | { mode: 'actions' }>(null)
+  const [pickerQuery, setPickerQuery] = useState('')
   const [scheduleSaveStatus, setScheduleSaveStatus] = useState<ScheduleSaveStatus>('idle')
   const [confirmState, setConfirmState] = useState<ConfirmState>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
@@ -1196,6 +1205,8 @@ export default function App() {
   const scheduleSaveTimerRef = useRef<number | null>(null)
   const scheduleLoadRevisionRef = useRef(0)
   const scheduleServerRevisionRef = useRef(0)
+  // Undo buttons outlive the render that created them, so they call through here to act on the latest state.
+  const undoActionsRef = useRef<UndoActions | null>(null)
   // What the server holds as of the last load or successful save, so saves can send only the difference.
   const savedScheduleRowsRef = useRef<ScheduleRowFingerprint | null>(null)
   const changesEndpointMissingRef = useRef(false)
@@ -1236,8 +1247,12 @@ export default function App() {
   }, [selected])
   useEffect(() => {
     if (!toasts.length) return
-    const timer = window.setTimeout(() => setToasts((current) => current.slice(1)), 2800)
-    return () => window.clearTimeout(timer)
+    // Each toast gets its own clock, so a queue of them doesn't linger end to end.
+    const timers = toasts.map((toast) => window.setTimeout(
+      () => setToasts((current) => current.filter((entry) => entry.id !== toast.id)),
+      Math.max(0, (toast.action ? 6000 : 2800) - (Date.now() - toast.createdAt)),
+    ))
+    return () => timers.forEach((handle) => window.clearTimeout(handle))
   }, [toasts])
   useEffect(() => {
     if (!supabase) {
@@ -1521,6 +1536,11 @@ export default function App() {
   const dueHabits = recurringHabits.filter((habit) => isDueOn(habit.repeatDays, selected) && !habitItems.some((item) => item.exerciseId === habit.id))
   const habitTotal = habitItems.length + dueHabits.length
   const habitDone = habitItems.filter((item) => item.done).length
+  const hasHabitLibrary = state.exercises.some((exercise) => exercise.kind === 'habit')
+  const pickerItems = daySheet?.mode === 'add'
+    ? sortedExercises.filter((exercise) => exercise.kind === daySheet.kind && (!pickerQuery.trim() || `${exercise.name} ${exercise.category} ${exercise.equipment}`.toLowerCase().includes(pickerQuery.trim().toLowerCase())))
+    : []
+  const onSelectedDay = new Set(day.items.map((item) => item.exerciseId))
   const plan = state.plans.find((p) => p.id === selectedPlanId) ?? null
   const progressExercise = progressExercises.find((exercise) => exercise.id === selectedProgressExerciseId) ?? progressExercises[0]
   const selectedDayPlanLabel = scheduledPlanLabel(day, state.runs, state.plans)
@@ -1537,7 +1557,8 @@ export default function App() {
   const pastDays = sortedDays.filter((day0) => day0.date < today).reverse()
   const listDays = showPastDays ? [...pastDays, ...futureDays] : futureDays
   const visibleDays = scheduleView === 'list' ? listDays.slice(0, visibleListCount) : sortedDays
-  const pushToast = (message: string) => setToasts((current) => [...current, { id: id('toast'), message }])
+  const pushToast = (message: string, action?: Toast['action']) => setToasts((current) => [...current, { id: id('toast'), message, createdAt: Date.now(), action }].slice(-3))
+  const pushUndoToast = (message: string, undo: () => Promise<unknown>) => pushToast(message, { label: 'Undo', run: () => void undo() })
   const toggleDaySection = (section: DaySection) => setOpenDaySections((current) => ({ ...current, [section]: !current[section] }))
   const updateScheduleMoveTargetFromPoint = (clientY: number) => {
     if (!scheduleTouchDragRef.current?.active) return
@@ -2196,8 +2217,43 @@ export default function App() {
   const addExerciseToDay = async (exerciseId: string, date: string) => {
     const ex = exById[exerciseId]
     if (!ex) return
-    await upsertDay(date, (d0) => ({ ...d0, skipped: false, items: [...d0.items, { id: id('it'), exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result', done: false, result: {} }] }))
+    const itemId = id('it')
+    await upsertDay(date, (d0) => ({ ...d0, skipped: false, items: [...d0.items, { id: itemId, exerciseId, type: ex.defaultType, target: clone(ex.target), ref: ex.refs[0] ?? 'last-result', done: false, result: {} }] }))
     setOpenDaySections((current) => ({ ...current, [ex.kind === 'habit' ? 'habits' : 'workout']: true }))
+    pushUndoToast(`Added ${ex.name}.`, () => undoActionsRef.current?.removeItem(date, itemId) ?? Promise.resolve())
+  }
+  // Item-level edits below read localScheduleRef so they're safe to call from an Undo long after the click.
+  const removeItemOnDate = async (date: string, itemId: string): Promise<RemovedItem | null> => {
+    const snap = localScheduleRef.current
+    const dayEntry = snap.schedule.find((entry) => entry.date === date)
+    const index = dayEntry ? dayEntry.items.findIndex((item) => item.id === itemId) : -1
+    if (!dayEntry || index < 0) return null
+    const removed = { item: dayEntry.items[index], index, log: snap.logs.find((entry) => entry.sourceItemId === itemId) }
+    const nextSchedule = snap.schedule.map((entry) => entry.date === date ? normalizeScheduleDay({ ...entry, items: entry.items.filter((item) => item.id !== itemId) }) : entry)
+    const ok = await commitScheduleState(nextSchedule, snap.runs, snap.logs.filter((entry) => entry.sourceItemId !== itemId), { persistMode: 'immediate' })
+    return ok ? removed : null
+  }
+  const restoreItemOnDate = async (date: string, removed: RemovedItem) => {
+    const snap = localScheduleRef.current
+    if (snap.schedule.some((entry) => entry.items.some((item) => item.id === removed.item.id))) return true
+    const base = snap.schedule.find((entry) => entry.date === date) ?? emptyScheduleDay(date)
+    const items = [...base.items]
+    items.splice(Math.min(removed.index, items.length), 0, removed.item)
+    const nextDay = normalizeScheduleDay({ ...base, items })
+    const nextSchedule = snap.schedule.some((entry) => entry.date === date) ? snap.schedule.map((entry) => entry.date === date ? nextDay : entry) : [...snap.schedule, nextDay]
+    const nextLogs = removed.log ? [...snap.logs.filter((entry) => entry.id !== removed.log?.id), removed.log] : snap.logs
+    return commitScheduleState(nextSchedule, snap.runs, nextLogs, { persistMode: 'immediate' })
+  }
+  const putItemOnDate = async (date: string, nextItem: Item) => {
+    const snap = localScheduleRef.current
+    if (!snap.schedule.some((entry) => entry.date === date && entry.items.some((item) => item.id === nextItem.id))) return false
+    const nextSchedule = snap.schedule.map((entry) => entry.date === date ? normalizeScheduleDay({ ...entry, items: entry.items.map((item) => item.id === nextItem.id ? nextItem : item) }) : entry)
+    return commitScheduleState(nextSchedule, snap.runs, syncLog(snap.logs, date, nextItem), { persistMode: 'immediate' })
+  }
+  const markItemIncomplete = async (item: Item, ex: Exercise) => {
+    const date = selected
+    const saved = await updateItem(item.id, (current) => ({ ...current, done: false }), { persistMode: 'immediate' })
+    if (saved) pushUndoToast(`${ex.name} marked not done.`, () => undoActionsRef.current?.putItem(date, item) ?? Promise.resolve())
   }
 
   const updateItemOnDate = async (date: string, itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }): Promise<boolean> => {
@@ -2220,10 +2276,10 @@ export default function App() {
     return commitScheduleState(schedule, state.runs, syncLog(state.logs, date, updatedItem), { persistMode: options?.persistMode })
   }
   const updateItem = async (itemId: string, fx: (x: Item) => Item, options?: { persistMode?: 'queued' | 'immediate' }): Promise<boolean> => updateItemOnDate(selected, itemId, fx, options)
-  const removeItem = async (itemId: string) => {
-    const nextSchedule = state.schedule.map((day0) => day0.date === selected ? normalizeScheduleDay({ ...day0, items: day0.items.filter((item) => item.id !== itemId) }) : day0)
-    const nextLogs = state.logs.filter((entry) => entry.sourceItemId !== itemId)
-    await commitScheduleState(nextSchedule, state.runs, nextLogs)
+  const removeItem = async (itemId: string, name: string) => {
+    const date = selected
+    const removed = await removeItemOnDate(date, itemId)
+    if (removed) pushUndoToast(`Removed ${name}.`, () => undoActionsRef.current?.restoreItem(date, removed) ?? Promise.resolve())
   }
   const revokeMobileSync = async () => {
     if (!supabase || !user) return
@@ -2236,7 +2292,7 @@ export default function App() {
     setMobilePairing(null)
     pushToast('Android phone disconnected.')
   }
-  const swapScheduleDays = async (sourceDate: string, targetDate: string) => {
+  const swapScheduleDays = async (sourceDate: string, targetDate: string, quiet = false) => {
     if (sourceDate === targetDate) {
       pushToast('Choose a different date to swap.')
       return
@@ -2259,7 +2315,7 @@ export default function App() {
       return firstDate && firstDate !== run.startDate ? { ...run, startDate: firstDate } : run
     })
     const saved = await commitScheduleState(nextSchedule, nextRuns, swapped.logs, { persistMode: 'immediate' })
-    if (saved) pushToast(`Swapped ${fmtShort(sourceDate)} and ${fmtShort(targetDate)}.`)
+    if (saved && !quiet) pushUndoToast(`Swapped ${fmtShort(sourceDate)} and ${fmtShort(targetDate)}.`, () => undoActionsRef.current?.swapDays(targetDate, sourceDate, true) ?? Promise.resolve())
   }
   const moveScheduleDay = async (sourceDate: string, targetDate: string, placement: 'before' | 'after') => {
     if (sourceDate === targetDate) return
@@ -3035,6 +3091,11 @@ export default function App() {
     focusExerciseEditor()
   }
 
+  const openPicker = (kind: TK) => {
+    setPickerQuery('')
+    setDaySheet({ mode: 'add', kind })
+  }
+  const closeDaySheet = () => setDaySheet(null)
   const quickHabitResult = (type: TT, target: Target): Result => type === 'duration'
     ? { seconds: target.seconds, ...(target.seconds !== undefined ? { timeText: fmtSecs(target.seconds) } : {}) }
     : { count: totalCount(target) }
@@ -3067,7 +3128,7 @@ export default function App() {
     const saved = await commitScheduleState(nextSchedule, state.runs, syncLog(state.logs, date, item), { persistMode: 'immediate' })
     if (!saved) return
     if (done) {
-      pushToast(`${habit.name} done.`)
+      pushUndoToast(`${habit.name} done.`, () => undoActionsRef.current?.removeItem(date, item.id) ?? Promise.resolve())
     } else {
       setItemDrafts((current) => ({ ...current, [item.id]: makeItemDraft(item, habit) }))
       setExpandedItems((current) => ({ ...current, [item.id]: true }))
@@ -3075,15 +3136,16 @@ export default function App() {
   }
   const toggleHabitItem = async (item: Item, habit: Exercise) => {
     if (item.done) {
-      await updateItem(item.id, (current) => ({ ...current, done: false }), { persistMode: 'immediate' })
+      await markItemIncomplete(item, habit)
       return
     }
+    const date = selected
     const saved = await updateItem(item.id, (current) => ({
       ...current,
       done: true,
       result: Object.keys(current.result).length ? current.result : quickHabitResult(current.type, current.target),
     }), { persistMode: 'immediate' })
-    if (saved) pushToast(`${habit.name} done.`)
+    if (saved) pushUndoToast(`${habit.name} done.`, () => undoActionsRef.current?.putItem(date, item) ?? Promise.resolve())
   }
   const renderDayItem = (item: Item) => {
             const ex = exById[item.exerciseId]; if (!ex) return null
@@ -3152,12 +3214,12 @@ export default function App() {
                         const nextTarget = blank(nextType)
                         setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), type: nextType, target: nextTarget, timeText: '', weightText: '', countText: '', setRepsText: nextTarget.sets && nextTarget.reps ? Array.from({ length: nextTarget.sets }, () => nextTarget.reps).join(' / ') : '', note: draft.note } }))
                       }}>{ex.allowed.map((t) => <option key={t} value={t}>{TT_LABEL[t]}</option>)}</select></label>
-                      <TargetEditor type={draft.type} target={draft.target} layout="detail" onChange={(target) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target } }))} />
+                      <TargetEditor type={draft.type} target={draft.target} layout="detail" durationIn={ex.kind === 'habit' ? 'minutes' : 'seconds'} onChange={(target) => setItemDrafts((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? makeItemDraft(item, ex)), target } }))} />
                     </div>
                     <div className="nav">
                       <button className="pill" onClick={() => void saveItemDraft(item, ex)}>Save target</button>
-                      {item.done && <button className="pill" onClick={() => void updateItem(item.id, (current) => ({ ...current, done: false }), { persistMode: 'immediate' })}>Mark incomplete</button>}
-                      <button className="textButton dangerTextButton" onClick={() => removeItem(item.id)}>Remove from day</button>
+                      {item.done && <button className="pill" onClick={() => void markItemIncomplete(item, ex)}>Mark not done</button>}
+                      <button className="textButton dangerTextButton" onClick={() => void removeItem(item.id, ex.name)}>Remove from day</button>
                     </div>
                   </div>
                 </details>
@@ -3165,6 +3227,15 @@ export default function App() {
             </article>
 
   }
+
+  useEffect(() => {
+    undoActionsRef.current = {
+      restoreItem: restoreItemOnDate,
+      putItem: putItemOnDate,
+      removeItem: removeItemOnDate,
+      swapDays: swapScheduleDays,
+    }
+  })
 
   return (
     <div className="app">
@@ -3204,15 +3275,18 @@ export default function App() {
       {tab === 'schedule' && <main className="grid scheduleGrid">
         <section ref={dayDetailRef} className="panel stack scheduleDetailPanel">
           <div className="dayDetailHeader">
-            <p className="eyebrow">{selected === today ? 'Today' : 'Workout'}</p>
+            <div className="dayDetailTopRow">
+              <p className="eyebrow">{selected === today ? 'Today' : 'Workout'}</p>
+              <button type="button" className="pill dayOptionsButton" onClick={() => setDaySheet({ mode: 'actions' })} aria-haspopup="dialog">Day options</button>
+            </div>
             <h2>{fmtDay(selected)}</h2>
             {selectedDayPlanLabel && <p className="dayDetailMeta">{selectedDayPlanLabel}</p>}
           </div>
           {day.skipped && <p className="status warn">This plan day is marked skipped.</p>}
-          {habitTotal > 0 && <section className={`dayFlowSection habitSection ${openDaySections.habits ? '' : 'collapsedSection'}`}>
+          {(habitTotal > 0 || hasHabitLibrary) && <section className={`dayFlowSection habitSection ${openDaySections.habits ? '' : 'collapsedSection'}`}>
             <button type="button" className="collapsibleSectionHeader" onClick={() => toggleDaySection('habits')} aria-expanded={openDaySections.habits} aria-controls="habit-section-content">
-              <div><p className="eyebrow">Habits</p><h3>{habitDone === habitTotal ? 'All habits done' : 'Daily habits'}</h3></div>
-              <div className="sectionHeaderStatus"><span>{habitDone} of {habitTotal}</span><span className="sectionChevron" aria-hidden="true">⌄</span></div>
+              <div><p className="eyebrow">Habits</p><h3>{habitTotal > 0 && habitDone === habitTotal ? 'All habits done' : 'Daily habits'}</h3></div>
+              <div className="sectionHeaderStatus"><span>{habitTotal > 0 ? `${habitDone} of ${habitTotal}` : 'None today'}</span><span className="sectionChevron" aria-hidden="true">⌄</span></div>
             </button>
             {openDaySections.habits && <div id="habit-section-content" className="collapsibleSectionContent">
               <div className="workoutList">
@@ -3227,6 +3301,7 @@ export default function App() {
                   </div>
                 </article>)}
               </div>
+              <button type="button" className="addItemButton" onClick={() => openPicker('habit')}><span aria-hidden="true">+</span> Add habit</button>
             </div>}
           </section>}
           <section className={`dayFlowSection workoutSection ${openDaySections.workout ? '' : 'collapsedSection'}`}>
@@ -3243,6 +3318,7 @@ export default function App() {
           {!isRestDay && <>
             <div className="workoutList">{workoutItems.map(renderDayItem)}</div>
           </>}
+          <button type="button" className="addItemButton" onClick={() => openPicker('exercise')}><span aria-hidden="true">+</span> Add exercise</button>
             </div>}
           </section>
           <section className={`dailyHealthCard ${openDaySections.health ? '' : 'collapsedSection'}`} aria-labelledby="daily-health-title">
@@ -3329,32 +3405,6 @@ export default function App() {
             </div>}
             </div>}
           </section>
-          <details className="secondaryTools dayOptions">
-            <summary>Day options</summary>
-            <div className="stack compactStack">
-              <label className="field addExerciseField">
-                <span>Add an exercise or habit</span>
-                <select aria-label="Select exercise or habit to add" defaultValue="" onChange={(event) => {
-                  if (!event.target.value) return
-                  void addExerciseToDay(event.target.value, selected)
-                  event.target.value = ''
-                }}>
-                  <option value="">Select an item...</option>
-                  {sortedExercises.map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.kind === 'habit' ? ' (Habit)' : ''}</option>)}
-                </select>
-              </label>
-              <label className="field"><span>Day notes</span><textarea className="shortTextarea" rows={2} aria-label="Day notes" placeholder="Optional notes" value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
-              <div className="swapDayControls">
-                <label className="field swapDayField">
-                  <span>Swap this day with</span>
-                  <input type="date" value={swapDate} onChange={(event) => setSwapDate(event.target.value)} />
-                  <small>Only these two calendar days exchange places. The rest of the program stays put.</small>
-                </label>
-                <button className="pill" onClick={() => void swapScheduleDays(selected, swapDate)} disabled={!swapDate || swapDate === selected}>Swap days</button>
-              </div>
-              {day.runId && <div className="row wrap dayActions compactDayActions"><button className="pill" onClick={toggleSkippedDay}>{day.skipped ? 'Unskip day' : 'Skip day'}</button><div className="inline compactInline"><input type="number" min={1} max={99} value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value))} aria-label="Days to push forward" /><button className="pill" onClick={shiftPlan} disabled={!shift || shift < 1}>Push forward</button></div></div>}
-            </div>
-          </details>
         </section>
 
         <section className="panel scheduleCalendarPanel">
@@ -3440,6 +3490,49 @@ export default function App() {
         </section>
       </main>}
 
+      {daySheet?.mode === 'add' && <Sheet title={daySheet.kind === 'habit' ? 'Add a habit' : 'Add an exercise'} subtitle={fmtDay(selected)} onClose={closeDaySheet}>
+        <div className="nav sheetKindToggle">{(['exercise', 'habit'] as const).map((kind) => <button key={kind} type="button" className={daySheet.kind === kind ? 'pill active' : 'pill'} aria-pressed={daySheet.kind === kind} onClick={() => setDaySheet({ mode: 'add', kind })}>{TRACKABLE_KIND_LABEL[kind]}s</button>)}</div>
+        <label className="field"><span className="srOnly">Search</span><input type="search" placeholder={daySheet.kind === 'habit' ? 'Search habits' : 'Search exercises'} value={pickerQuery} onChange={(event) => setPickerQuery(event.target.value)} /></label>
+        <div className="pickerList">
+          {pickerItems.map((exercise) => {
+            const last = exercise.kind === 'exercise' ? referenceSummary(exerciseHistory(exercise.id), exercise, 'last-result', exercise.defaultType) : 'none'
+            return <button key={exercise.id} type="button" className="pickerRow" onClick={() => {
+              closeDaySheet()
+              void addExerciseToDay(exercise.id, selected)
+            }}>
+              <span className="pickerRowText"><strong>{exercise.name}</strong><span>{exercise.category}{last !== 'none' ? ` · Last ${last}` : ''}</span></span>
+              {onSelectedDay.has(exercise.id) ? <span className="kindBadge subtleBadge">On this day</span> : <span className="pickerAdd" aria-hidden="true">+</span>}
+            </button>
+          })}
+          {pickerItems.length === 0 && <p className="mutedCopy">Nothing matches. Create it in the Library first.</p>}
+        </div>
+        {daySheet.kind === 'habit' && <p className="mutedCopy sheetFootnote">Want a habit every day? Set <strong>Repeat on</strong> in the <button type="button" className="textButton inlineTextButton" onClick={() => { closeDaySheet(); switchLibraryFilter('habit'); openTab('exercises') }}>Library</button> and it will show up on its own.</p>}
+      </Sheet>}
+
+      {daySheet?.mode === 'actions' && <Sheet title="Day options" subtitle={fmtDay(selected)} onClose={closeDaySheet}>
+        <div className="sheetGroup">
+          <label className="field"><span>Notes</span><textarea className="shortTextarea" rows={2} placeholder="Optional notes for this day" value={day.notes} onChange={(e) => upsertDay(selected, (d0) => ({ ...d0, notes: e.target.value }))} /></label>
+        </div>
+        <div className="sheetGroup">
+          <div className="sheetGroupText"><strong>Swap with another day</strong><p>Trades this day’s workout with the date you pick. Habits stay on their own dates.</p></div>
+          <div className="sheetInlineRow">
+            <label className="field sheetDateField"><span className="srOnly">Date to swap with</span><input type="date" value={swapDate} onChange={(event) => setSwapDate(event.target.value)} /></label>
+            <button type="button" className="primary" onClick={() => { closeDaySheet(); void swapScheduleDays(selected, swapDate) }} disabled={!swapDate || swapDate === selected}>Swap</button>
+          </div>
+        </div>
+        {day.runId && <div className="sheetGroup">
+          <div className="sheetGroupText"><strong>{day.skipped ? 'Unskip this plan day' : 'Skip this plan day'}</strong><p>{day.skipped ? 'Puts it back to normal.' : 'Marks it skipped without moving anything else.'}</p></div>
+          <button type="button" className="pill" onClick={() => { closeDaySheet(); void toggleSkippedDay() }}>{day.skipped ? 'Unskip' : 'Skip day'}</button>
+        </div>}
+        {day.runId && <div className="sheetGroup">
+          <div className="sheetGroupText"><strong>Push the program back</strong><p>Moves this day and every later day of this program forward.</p></div>
+          <div className="sheetInlineRow">
+            <label className="field pushDaysField"><input type="number" min={1} max={99} inputMode="numeric" value={numberInputValue(shift)} onChange={(e) => setShift(parseNumberInput(e.target.value))} aria-label="Days to push forward" /><span>days</span></label>
+            <button type="button" className="pill" onClick={() => { closeDaySheet(); void shiftPlan() }} disabled={!shift || shift < 1}>Push</button>
+          </div>
+        </div>}
+      </Sheet>}
+
       {confirmState && <div className="overlay">
         <div className="confirmCard">
           <h3>{confirmState.title}</h3>
@@ -3455,9 +3548,15 @@ export default function App() {
         </div>
       </div>}
 
-      {toasts.length > 0 && <div className="toastStack">
-        {toasts.map((toast) => <div key={toast.id} className="toast">{toast.message}</div>)}
-      </div>}
+      <div className={daySheet || confirmState ? 'toastStack toastStackTop' : 'toastStack'} aria-live="polite">
+        {toasts.map((toast) => <div key={toast.id} className={toast.action ? 'toast toastWithAction' : 'toast'}>
+          <span>{toast.message}</span>
+          {toast.action && <button type="button" className="toastAction" onClick={() => {
+            setToasts((current) => current.filter((entry) => entry.id !== toast.id))
+            toast.action?.run()
+          }}>{toast.action.label}</button>}
+        </div>)}
+      </div>
 
       {tab === 'coach' && <main className="coachPage">
         <section className="panel programCoachPanel">
@@ -3554,7 +3653,7 @@ export default function App() {
             return { ...x, progressMetric: nextMetric }
           })}>{(exerciseForm.kind === 'habit' ? (['count', 'time'] as PM[]) : (Object.keys(PM_LABEL) as PM[])).map((metricOption) => <option key={metricOption} value={metricOption}>{PM_LABEL[metricOption]}</option>)}</select></label>
           <p className="mutedCopy">{progressMetricHint(exerciseForm)}</p>
-          <TargetEditor type={exerciseForm.defaultType} target={exerciseForm.target} onChange={(target) => setExerciseForm((x) => ({ ...x, target }))} />
+          <TargetEditor type={exerciseForm.defaultType} target={exerciseForm.target} durationIn={exerciseForm.kind === 'habit' ? 'minutes' : 'seconds'} onChange={(target) => setExerciseForm((x) => ({ ...x, target }))} />
           <div><span className="fieldLabel">Allowed target types</span><div className="chips">{allowedTypesForKind(exerciseForm.kind).map((t) => { const on = exerciseForm.allowed.includes(t); return <button key={t} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, allowed: on ? (x.allowed.filter((y) => y !== t).length ? x.allowed.filter((y) => y !== t) : [x.defaultType]) : [...x.allowed, t] }))}>{TT_LABEL[t]}</button> })}</div></div>
           <div><span className="fieldLabel">Reference choices</span><div className="chips">{(Object.keys(RM_LABEL) as RM[]).map((r) => { const on = exerciseForm.refs.includes(r); return <button key={r} className={on ? 'pill active' : 'pill'} onClick={() => setExerciseForm((x) => ({ ...x, refs: on ? x.refs.filter((y) => y !== r) : [...x.refs, r] }))}>{RM_LABEL[r]}</button> })}</div></div>
           <div className="nav">
@@ -3988,7 +4087,43 @@ export default function App() {
   )
 }
 
-function TargetEditor({ type, target, onChange, actions, layout = 'default' }: { type: TT; target: Target; onChange: (t: Target) => void; actions?: ReactNode; layout?: 'default' | 'detail' }) {
+function Sheet({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onClose)
+  useEffect(() => {
+    closeRef.current = onClose
+  })
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    panelRef.current?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = previousOverflow
+      previousFocus?.focus()
+    }
+  }, [])
+  return <div className="overlay sheetOverlay" onClick={() => closeRef.current()}>
+    <div ref={panelRef} className="sheet" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} onClick={(event) => event.stopPropagation()}>
+      <div className="sheetHeader">
+        <div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div>
+        <button type="button" className="iconPill sheetClose" onClick={() => closeRef.current()} aria-label="Close">×</button>
+      </div>
+      <div className="sheetBody">{children}</div>
+    </div>
+  </div>
+}
+
+function minutesValue(seconds?: number) {
+  return seconds === undefined ? '' : String(Math.round((seconds / 60) * 100) / 100)
+}
+
+function TargetEditor({ type, target, onChange, actions, layout = 'default', durationIn = 'seconds' }: { type: TT; target: Target; onChange: (t: Target) => void; actions?: ReactNode; layout?: 'default' | 'detail'; durationIn?: 'seconds' | 'minutes' }) {
   if (type === 'count') {
     const fields = <div className="countTargetFields"><label className={`field ${layout === 'detail' ? 'compactMetricField compactControl' : 'grow'}`}><span>Target count</span><input type="number" min={1} value={numberInputValue(target.count)} onChange={(e) => onChange({ ...target, count: parseNumberInput(e.target.value) })} /></label><label className={`field countUnitField ${layout === 'detail' ? 'compactControl' : ''}`}><span>Count as</span><select value={target.countUnit ?? 'reps'} onChange={(e) => onChange({ ...target, countUnit: e.target.value as CountUnit })}><option value="reps">Reps</option><option value="steps">Steps</option></select></label></div>
     return <div className="targetRow">{fields}{actions}</div>
@@ -3996,6 +4131,14 @@ function TargetEditor({ type, target, onChange, actions, layout = 'default' }: {
   if (type === 'sets') {
     if (layout === 'detail') return <div className="detailTargetFields"><label className="field microField compactControl"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field microField compactControl"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label>{actions}</div>
     return <div className="targetInline"><div className="split compactSplit"><label className="field"><span>Sets</span><input type="number" min={1} value={numberInputValue(target.sets)} onChange={(e) => onChange({ ...target, sets: parseNumberInput(e.target.value) })} /></label><label className="field"><span>Reps</span><input type="number" min={1} value={numberInputValue(target.reps)} onChange={(e) => onChange({ ...target, reps: parseNumberInput(e.target.value) })} /></label></div>{actions}</div>
+  }
+  if (type === 'duration' && durationIn === 'minutes') {
+    const input = <input type="number" min={1} step="any" inputMode="decimal" value={minutesValue(target.seconds)} onChange={(e) => {
+      const minutes = parseNumberInput(e.target.value)
+      onChange({ seconds: minutes === undefined ? undefined : Math.round(minutes * 60) })
+    }} />
+    if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Minutes</span>{input}</label>{actions}</div>
+    return <div className="targetRow"><label className="field grow"><span>Target minutes</span>{input}</label>{actions}</div>
   }
   if (type === 'duration') {
     if (layout === 'detail') return <div className="targetRow"><label className="field compactMetricField compactControl"><span>Seconds</span><input type="number" min={10} value={numberInputValue(target.seconds)} onChange={(e) => onChange({ seconds: parseNumberInput(e.target.value) })} /></label>{actions}</div>
