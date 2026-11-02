@@ -88,7 +88,7 @@ export type ExerciseEditorMode = 'existing' | 'new'
 export type ScheduleTouchDrag = { sourceDate: string; active: boolean; pointerId?: number; startX: number; startY: number }
 export type ScheduleMoveTarget = { date: string; placement: 'before' | 'after' }
 export type ConfirmState =
-  | { kind: 'delete-run'; runId: string; title: string; body: string }
+  | { kind: 'delete-run'; runIds: string[]; title: string; body: string }
   | { kind: 'delete-plan'; planId: string; title: string; body: string }
   | { kind: 'delete-exercise'; exerciseId: string; title: string; body: string }
   | { kind: 'import-data'; title: string; body: string }

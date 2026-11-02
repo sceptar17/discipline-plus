@@ -1448,9 +1448,18 @@ export default function App() {
   const sortedDays = [...state.schedule].sort((a, b) => a.date.localeCompare(b.date))
   const nextWorkoutDay = sortedDays.find((day0) => day0.date > selected && day0.items.some((item) => !isHabitItem(item)))
   const activeRuns = state.runs.filter((run) => run.status === 'active')
+  // Extending a plan adds another cycle; show a plan's active cycles as one program.
+  const activeProgramGroups = Object.values(activeRuns.reduce<Record<string, { key: string; plan?: Plan; runs: Run[] }>>((groups, run) => {
+    const groupKey = run.planId ? `plan-${run.planId}` : run.id
+    const entry = groups[groupKey] ?? { key: groupKey, plan: state.plans.find((plan0) => plan0.id === run.planId), runs: [] }
+    entry.runs.push(run)
+    groups[groupKey] = entry
+    return groups
+  }, {})).map((group) => ({ ...group, runs: [...group.runs].sort((a, b) => a.startDate.localeCompare(b.startDate)) }))
   const completedRuns = state.runs.filter((run) => run.status === 'completed').sort((a, b) => (b.completedAt ?? b.startDate).localeCompare(a.completedAt ?? a.startDate))
   const activePlanIds = new Set(activeRuns.map((run) => run.planId).filter((planId): planId is string => !!planId))
   const planToApply = state.plans.find((entry) => entry.id === applyPlanId)
+  const extendingPlan = Boolean(applyPlanId && activePlanIds.has(applyPlanId))
   const firstNewCycleNumber = applyPlanId ? state.runs.filter((run) => run.planId === applyPlanId).length + 1 : 1
   const applyPlanPreview = buildPlanSchedulePreview(planToApply, applyStartDate, applyScheduleMode, applyCycleCount, applyEndDate, state.schedule.filter(hasWorkoutContent), firstNewCycleNumber)
   const futureDays = sortedDays.filter((day0) => day0.date >= today)
@@ -2651,10 +2660,11 @@ export default function App() {
     const startDate = latestScheduledDate ? add(latestScheduledDate, 1) : today
     setApplyPlanId(planIdToApply)
     setApplyStartDate(startDate)
-    setApplyScheduleMode('cycles')
+    const extending = state.runs.some((run) => run.planId === planIdToApply && run.status === 'active')
+    setApplyScheduleMode(extending ? 'end-date' : 'cycles')
     setApplyTargetMode('latest')
     setApplyCycleCount(1)
-    setApplyEndDate(add(startDate, 59))
+    setApplyEndDate(add(startDate, extending ? 13 : 59))
   }
 
   const schedulePlanCycles = async () => {
@@ -2693,7 +2703,7 @@ export default function App() {
     setApplyPlanSaving(false)
     if (!saved) return
     setApplyPlanId(null)
-    pushToast(`${applyPlanPreview.cycles.length} cycle${applyPlanPreview.cycles.length === 1 ? '' : 's'} scheduled through ${fmtShort(applyPlanPreview.endDate)}${applyTargetMode === 'latest' ? ' using your latest results' : ' using plan defaults'}.`)
+    pushToast(`${extendingPlan ? 'Extended' : 'Scheduled'} through ${fmtShort(applyPlanPreview.endDate)}${applyTargetMode === 'latest' ? ', starting from your latest results' : ' using plan defaults'}.`)
   }
 
   const shiftPlan = async () => {
@@ -2811,33 +2821,35 @@ export default function App() {
     setExerciseEditorMode(nextExercise ? 'existing' : 'new')
     setExerciseForm(nextExercise ? formFromExercise(nextExercise) : emptyExerciseForm())
   }
-  const deleteRun = async (runId: string, options?: { keepCompletedDays?: boolean }) => {
+  const deleteRuns = async (runIds: string[], options?: { keepCompletedDays?: boolean }) => {
     const keepCompletedDays = options?.keepCompletedDays ?? false
+    const removing = new Set(runIds)
     const removedItemIds = new Set<string>()
     const keptDays: Day[] = []
 
     state.schedule.forEach((day0) => {
-      if (day0.runId !== runId) return
-      const isCompleted = day0.items.length > 0 && day0.items.every((item) => item.done)
-      if (keepCompletedDays && isCompleted) {
-        keptDays.push(normalizeScheduleDay({ ...day0, runId: undefined, dayNo: undefined, skipped: false }))
-        return
-      }
-      day0.items.forEach((item) => removedItemIds.add(item.id))
+      if (!day0.runId || !removing.has(day0.runId)) return
+      const workout = day0.items.filter((item) => !isHabitItem(item))
+      const isCompleted = workout.length > 0 && workout.every((item) => item.done)
+      // Habits logged on program days belong to you, not the program, so they always stay.
+      const keptItems = keepCompletedDays && isCompleted ? day0.items : day0.items.filter(isHabitItem)
+      day0.items.filter((item) => !keptItems.includes(item)).forEach((item) => removedItemIds.add(item.id))
+      if (keptItems.length) keptDays.push(normalizeScheduleDay({ ...day0, items: keptItems, runId: undefined, dayNo: undefined, skipped: false }))
     })
 
-    const nextSchedule = [...state.schedule.filter((day0) => day0.runId !== runId), ...keptDays]
+    const nextSchedule = [...state.schedule.filter((day0) => !day0.runId || !removing.has(day0.runId)), ...keptDays]
       .sort((a, b) => a.date.localeCompare(b.date))
-    const nextRuns = state.runs.filter((run) => run.id !== runId)
+    const nextRuns = state.runs.filter((run) => !removing.has(run.id))
     const nextLogs = state.logs.filter((entry) => !entry.sourceItemId || !removedItemIds.has(entry.sourceItemId))
     await commitScheduleState(nextSchedule, nextRuns, nextLogs)
   }
-  const setRunStatus = async (runId: string, status: RunStatus) => {
-    const nextRuns = state.runs.map((run) => run.id === runId
+  const setRunStatus = async (runIdOrIds: string | string[], status: RunStatus) => {
+    const runIds = new Set(Array.isArray(runIdOrIds) ? runIdOrIds : [runIdOrIds])
+    const nextRuns = state.runs.map((run) => runIds.has(run.id)
       ? { ...run, status, completedAt: status === 'completed' ? new Date().toISOString() : undefined }
       : run)
     const saved = await commitScheduleState(state.schedule, nextRuns, state.logs, { persistMode: 'immediate' })
-    if (saved) pushToast(status === 'completed' ? 'Run moved to completed history. All scheduled days and logs were kept.' : 'Run reopened.')
+    if (saved) pushToast(status === 'completed' ? 'Program moved to past programs. Every logged day was kept.' : 'Program reopened.')
   }
   const resetAllData = async () => {
     await replaceWorkspaceState(ensureAmpedData(seed()))
@@ -2860,7 +2872,7 @@ export default function App() {
   }
   const confirmAction = async () => {
     if (!confirmState) return
-    if (confirmState.kind === 'delete-run') await deleteRun(confirmState.runId, { keepCompletedDays: keepCompletedPlanDays })
+    if (confirmState.kind === 'delete-run') await deleteRuns(confirmState.runIds, { keepCompletedDays: keepCompletedPlanDays })
     if (confirmState.kind === 'delete-plan') await deletePlan(confirmState.planId)
     if (confirmState.kind === 'delete-exercise') await deleteExercise(confirmState.exerciseId)
     if (confirmState.kind === 'import-data') await importData()
@@ -3596,37 +3608,45 @@ export default function App() {
       {tab === 'plans' && <main className="stack plansPage planGroupPage">
         {planSubNav}
         <section className="panel stack currentProgramPanel">
-          <div><p className="eyebrow">Current program</p><h2>{activeRuns.length ? (activeRuns.length === 1 ? 'In progress' : `${activeRuns.length} in progress`) : 'Nothing scheduled'}</h2></div>
-          {activeRuns.length === 0 && <div className="noticeCard"><p>Pick one of your plans below and choose <strong>Start</strong> to put it on the calendar.</p></div>}
-          {activeRuns.map((r) => {
-            const runDays = state.schedule.filter((x) => x.runId === r.id).sort((a, b) => a.date.localeCompare(b.date))
+          <div><p className="eyebrow">Current program</p><h2>{activeProgramGroups.length ? (activeProgramGroups.length === 1 ? 'In progress' : `${activeProgramGroups.length} in progress`) : 'Nothing scheduled'}</h2></div>
+          {activeProgramGroups.length === 0 && <div className="noticeCard"><p>Pick one of your plans below and choose <strong>Start</strong> to put it on the calendar.</p></div>}
+          {activeProgramGroups.map((group) => {
+            const groupRunIds = new Set(group.runs.map((run) => run.id))
+            const runDays = state.schedule.filter((x) => x.runId && groupRunIds.has(x.runId)).sort((a, b) => a.date.localeCompare(b.date))
             const workoutDays = runDays.filter((day0) => day0.items.some((item) => !isHabitItem(item)))
             const isDone = (day0: Day) => day0.skipped || day0.items.filter((item) => !isHabitItem(item)).every((item) => item.done)
             const completedDays = workoutDays.filter(isDone).length
             const totalDays = workoutDays.length
             const progress = totalDays ? Math.round((completedDays / totalDays) * 100) : 0
-            const firstDate = runDays[0]?.date ?? r.startDate
-            const lastDate = runDays[runDays.length - 1]?.date ?? r.startDate
+            const firstRun = group.runs[0]
+            const firstDate = runDays[0]?.date ?? firstRun.startDate
+            const lastDate = runDays[runDays.length - 1]?.date ?? firstRun.startDate
             const totalWeeks = Math.max(1, Math.ceil((dateOrdinal(lastDate) - dateOrdinal(firstDate) + 1) / 7))
             const currentWeek = Math.min(totalWeeks, Math.max(1, Math.floor((dateOrdinal(today) - dateOrdinal(firstDate)) / 7) + 1))
             const nextDay = workoutDays.find((day0) => day0.date >= today && !isDone(day0))
             const nextNames = nextDay ? nextDay.items.filter((item) => !isHabitItem(item)).map((item) => exById[item.exerciseId]?.name).filter(Boolean) as string[] : []
-            return <article key={r.id} className="programCard stack">
+            const title = group.plan?.name ?? runDisplayName(firstRun, state.plans, today)
+            const runIdList = group.runs.map((run) => run.id)
+            return <article key={group.key} className="programCard stack">
               <div className="row">
                 <div>
-                  <h3>{runDisplayName(r, state.plans, today)}</h3>
+                  <h3>{title}</h3>
                   <p className="mutedCopy">{today < firstDate ? `Starts ${fmtShort(firstDate)}` : `Week ${currentWeek} of ${totalWeeks}`} · {fmtDateRange(firstDate, lastDate)}</p>
                 </div>
-                <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton" onClick={() => void setRunStatus(r.id, 'completed')}>Mark finished</button><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove this program?', body: 'This removes the program and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove program</button></details>
+                <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${title}`}>•••</summary>
+                  {group.plan && <button className="textButton" onClick={() => openPlanScheduler(group.plan!.id)}>Extend</button>}
+                  <button className="textButton" onClick={() => void setRunStatus(runIdList, 'completed')}>Mark finished</button>
+                  <button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runIds: runIdList, title: 'Remove this program?', body: 'This removes the program and its scheduled days. Habits stay, and you can keep completed workouts on the calendar as history.' })}>Remove program</button>
+                </details>
               </div>
               <div className="programProgress">
                 <div className="progressTrack" aria-label={`${progress}% complete`}><div className="progressFill" style={{ width: `${progress}%` }} /></div>
                 <span>{completedDays} of {totalDays} workouts</span>
               </div>
               {nextDay ? <button type="button" className="nextWorkoutRow" onClick={() => openDayFromCalendar(nextDay.date)}>
-                <span><span className="fieldLabel">{nextDay.date === today ? 'Today' : 'Next workout'}</span><strong>{nextDay.date === today ? fmtDay(nextDay.date) : fmtDay(nextDay.date)}</strong><span className="mutedCopy">{nextNames.slice(0, 3).join(', ')}{nextNames.length > 3 ? ` +${nextNames.length - 3}` : ''}</span></span>
+                <span><span className="fieldLabel">{nextDay.date === today ? 'Today' : 'Next workout'}</span><strong>{fmtDay(nextDay.date)}</strong><span className="mutedCopy">{nextNames.slice(0, 3).join(', ')}{nextNames.length > 3 ? ` +${nextNames.length - 3}` : ''}</span></span>
                 <span aria-hidden="true">›</span>
-              </button> : <p className="mutedCopy">All workouts in this program are done. Mark it finished from the ••• menu.</p>}
+              </button> : <p className="mutedCopy">All workouts are done. Extend it, or mark it finished from the ••• menu.</p>}
             </article>
           })}
         </section>
@@ -3689,11 +3709,14 @@ export default function App() {
           <div className="stack">
             {state.plans.map((p) => <div key={p.id} className={selectedPlanId === p.id ? 'listItem activeItem planListRow' : 'listItem planListRow'}>
               <button className="planListButton" onClick={() => selectPlan(p.id)}><strong>{p.name}</strong></button>
-              <div className="planListActions">{activePlanIds.has(p.id) && <span className="status activePlanStatus">Active</span>}<button className="pill softActionPill" onClick={() => openPlanScheduler(p.id)} aria-label={`Schedule ${p.name}`}>{activePlanIds.has(p.id) ? 'Run again' : 'Start'}</button></div>
+              <div className="planListActions">{activePlanIds.has(p.id) && <span className="status activePlanStatus">Active</span>}<button className="pill softActionPill" onClick={() => openPlanScheduler(p.id)} aria-label={`${activePlanIds.has(p.id) ? 'Extend' : 'Start'} ${p.name}`}>{activePlanIds.has(p.id) ? 'Extend' : 'Start'}</button></div>
             </div>)}
           </div>
           {applyPlanId && <div className="card stack planSchedulerCard">
-            <div><p className="eyebrow">Start plan</p><h3>{planToApply?.name ?? 'Plan'}</h3><p className="mutedCopy">Put this plan on your calendar. The plan itself doesn’t change, so you can run it again later.</p></div>
+            <div><p className="eyebrow">{extendingPlan ? 'Extend program' : 'Start plan'}</p><h3>{planToApply?.name ?? 'Plan'}</h3><p className="mutedCopy">{extendingPlan ? 'Adds more weeks right after your current schedule ends. It stays one program, and each exercise picks up from your latest results.' : 'Put this plan on your calendar. The plan itself doesn’t change, so you can run it again later.'}</p></div>
+            {extendingPlan && applyScheduleMode === 'end-date' && <div className="nav quickExtend" role="group" aria-label="Quick lengths">
+              {[1, 2, 4].map((weeks) => { const end = add(applyStartDate, weeks * 7 - 1); return <button key={weeks} type="button" className={applyEndDate === end ? 'pill active' : 'pill'} aria-pressed={applyEndDate === end} onClick={() => setApplyEndDate(end)}>+{weeks} week{weeks === 1 ? '' : 's'}</button> })}
+            </div>}
             <div className="scheduleModePicker" role="group" aria-label="Scheduling method">
               <button className={applyScheduleMode === 'cycles' ? 'pill active' : 'pill'} onClick={() => setApplyScheduleMode('cycles')}>Number of cycles</button>
               <button className={applyScheduleMode === 'end-date' ? 'pill active' : 'pill'} onClick={() => setApplyScheduleMode('end-date')}>Through an end date</button>
@@ -3716,7 +3739,7 @@ export default function App() {
               {applyPlanPreview.conflicts.length > 0 && <div className="scheduleConflictWarning"><strong>{applyPlanPreview.conflicts.length} calendar conflict{applyPlanPreview.conflicts.length === 1 ? '' : 's'}</strong><p>{applyPlanPreview.conflicts.slice(0, 5).map(fmtShort).join(', ')}{applyPlanPreview.conflicts.length > 5 ? ` and ${applyPlanPreview.conflicts.length - 5} more` : ''}. Choose another start date or adjust the existing schedule first.</p></div>}
             </div>}
             <div className="nav">
-              <button className="primary" onClick={() => void schedulePlanCycles()} disabled={applyPlanSaving || Boolean(applyPlanPreview.error) || applyPlanPreview.conflicts.length > 0}>{applyPlanSaving ? 'Scheduling...' : `Schedule ${applyPlanPreview.cycles.length || ''} cycle${applyPlanPreview.cycles.length === 1 ? '' : 's'}`}</button>
+              <button className="primary" onClick={() => void schedulePlanCycles()} disabled={applyPlanSaving || Boolean(applyPlanPreview.error) || applyPlanPreview.conflicts.length > 0}>{applyPlanSaving ? 'Saving...' : extendingPlan ? `Extend through ${fmtShort(applyPlanPreview.endDate)}` : `Start ${applyPlanPreview.cycles.length > 1 ? `${applyPlanPreview.cycles.length} cycles` : 'program'}`}</button>
               <button className="pill" onClick={() => setApplyPlanId(null)} disabled={applyPlanSaving}>Cancel</button>
             </div>
           </div>}
@@ -3734,7 +3757,7 @@ export default function App() {
                   </div>
                   <div className="completedRunActions">
                     <button className="pill" onClick={() => void setRunStatus(r.id, 'active')}>Reopen</button>
-                    <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runId: r.id, title: 'Remove past program?', body: 'This will remove the run and its scheduled days. You can keep already completed days on the calendar as standalone history.' })}>Remove program</button></details>
+                    <details className="secondaryTools compactMenu"><summary aria-label={`Options for ${r.name}`}>•••</summary><button className="textButton dangerTextButton" onClick={() => setConfirmState({ kind: 'delete-run', runIds: [r.id], title: 'Remove past program?', body: 'This removes the program and its scheduled days. Habits stay, and you can keep completed workouts on the calendar as history.' })}>Remove program</button></details>
                   </div>
                 </article>
               })}

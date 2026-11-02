@@ -19,7 +19,7 @@
   border: 0;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
-  background: rgb(246 247 244 / 0.94);
+  background: var(--header-bg);
   box-shadow: none;
   backdrop-filter: saturate(1.4) blur(10px);
 }
@@ -85,7 +85,7 @@
 .segment.active {
   background: var(--panel);
   color: var(--text-strong);
-  box-shadow: 0 1px 2px rgb(16 24 40 / 0.08), 0 1px 1px rgb(16 24 40 / 0.04);
+  box-shadow: var(--shadow-segment);
 }
 
 .topNavButton:focus-visible,
@@ -200,7 +200,7 @@
 .primary {
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .primary:hover:not(:disabled) { background: var(--accent-strong); }
@@ -686,8 +686,8 @@ textarea:focus {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: var(--warn);
-  color: #fff;
+  background: var(--warn-mark);
+  color: var(--on-warn);
   font-size: 0.8rem;
   font-weight: 800;
 }
@@ -710,8 +710,8 @@ textarea:focus {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--warn);
-  color: #fff;
+  background: var(--warn-mark);
+  color: var(--on-warn);
   font-size: 0.65rem;
 }
 
@@ -737,7 +737,7 @@ textarea:focus {
   position: relative;
   height: 8px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgb(180 83 9 / 0.18) 0 20%, var(--surface-strong) 20% 100%);
+  background: linear-gradient(90deg, var(--warn-tint) 0 20%, var(--surface-strong) 20% 100%);
 }
 
 .normTick {
@@ -759,7 +759,7 @@ textarea:focus {
   transform: translate(-50%, -50%);
 }
 
-.normMarker.below { background: var(--warn); }
+.normMarker.below { background: var(--warn-mark); }
 
 .normScale {
   display: flex;
@@ -827,8 +827,8 @@ textarea:focus {
 .chartReference { stroke: rgb(var(--ink-rgb) / 0.16); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .chartReferenceLabel { fill: var(--text-muted); font-size: 11px; }
 .chartAxis { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.chartLine { fill: none; stroke: #0d9488; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.chartArea { fill: rgb(13 148 136 / 0.1); stroke: none; }
+.chartLine { fill: none; stroke: var(--chart); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chartArea { fill: var(--chart-area); stroke: none; }
 .chartCrosshair { stroke: rgb(var(--ink-rgb) / 0.35); stroke-width: 1; }
 
 .chartDot {
@@ -836,7 +836,7 @@ textarea:focus {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #0d9488;
+  background: var(--chart);
   box-shadow: 0 0 0 2px var(--panel);
   transform: translate(-50%, -50%);
   pointer-events: none;
@@ -870,13 +870,13 @@ textarea:focus {
 .pickerAdd { color: var(--accent); }
 
 .toast {
-  background: #1c2126;
-  color: #fff;
+  background: var(--toast-bg);
+  color: var(--toast-text);
   border-radius: 12px;
   box-shadow: var(--shadow-raised);
 }
 
-.toastAction { border-color: rgb(255 255 255 / 0.4); color: #7dd3c8; }
+.toastAction { border-color: var(--toast-action-border); color: var(--toast-action); }
 
 .kindBadge { background: var(--accent-tint); color: var(--accent-strong); border: 0; }
 
@@ -980,3 +980,9 @@ textarea { font: inherit; }
 .programCoachPanel .programCoachComposer > .primary { flex: 0 0 auto; width: auto; min-width: 84px; }
 
 .progressHero .verdictTag { align-self: flex-start; }
+
+/* Black PowerBlock rails need a visible ring on dark surfaces. */
+@media (prefers-color-scheme: dark) {
+  .powerBlockDot { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px rgb(255 255 255 / 0.4); }
+  .normTick { background: var(--panel); }
+}

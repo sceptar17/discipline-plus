@@ -65,7 +65,7 @@
   content: "";
   position: absolute;
   inset: 8px 11px 8px 10px;
-  background: #ffffff;
+  background: var(--on-accent);
   clip-path: polygon(45% 0%, 100% 0%, 62% 44%, 92% 44%, 28% 100%, 46% 58%, 14% 58%);
 }
 
@@ -133,7 +133,7 @@
 .topNavButton.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   box-shadow: 0 12px 28px rgb(var(--accent-rgb) / 0.22);
 }
 
@@ -845,7 +845,7 @@
 
 .activeIconPill {
   border-color: rgb(var(--accent-rgb) / 0.5);
-  color: #fff;
+  color: var(--accent-strong);
   background: rgb(var(--accent-rgb) / 0.18);
 }
 
@@ -1670,7 +1670,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(28, 33, 38, 0.36);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;

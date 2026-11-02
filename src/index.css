@@ -24,6 +24,18 @@
   --danger: #b42318;
   --shadow: 0 1px 2px rgb(16 24 40 / 0.04), 0 2px 8px rgb(16 24 40 / 0.05);
   --shadow-raised: 0 8px 28px rgb(16 24 40 / 0.12);
+  --shadow-segment: 0 1px 2px rgb(16 24 40 / 0.08), 0 1px 1px rgb(16 24 40 / 0.04);
+  --header-bg: rgb(246 247 244 / 0.94);
+  --on-accent: #ffffff;
+  --warn-mark: #b45309;
+  --on-warn: #ffffff;
+  --chart: #0d9488;
+  --chart-area: rgb(13 148 136 / 0.1);
+  --toast-bg: #1c2126;
+  --toast-text: #ffffff;
+  --toast-action: #7dd3c8;
+  --toast-action-border: rgb(255 255 255 / 0.4);
+  --overlay: rgb(28 33 38 / 0.36);
   color: var(--text);
   background: var(--bg);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -34,6 +46,49 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color-scheme: light;
+}
+
+/* Dark: follows the phone's setting. Graphite surfaces, same single teal accent, stepped for a dark background. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink-rgb: 255 255 255;
+    --accent-rgb: 45 212 191;
+    --danger-rgb: 248 113 113;
+    --bg: #111315;
+    --panel: #1a1d20;
+    --panel-strong: #1f2226;
+    --surface: #23272b;
+    --surface-strong: #2c3136;
+    --border: rgb(255 255 255 / 0.08);
+    --border-strong: rgb(255 255 255 / 0.15);
+    --text: #c8cdd2;
+    --text-strong: #eef1f3;
+    --text-muted: #8f979e;
+    --accent: #2cc0ad;
+    --accent-strong: #6ee7d6;
+    --accent-soft: #7fa8a2;
+    --accent-deep: #2cc0ad;
+    --accent-tint: rgb(45 212 191 / 0.12);
+    --success: #4ade80;
+    --warn: #f0b458;
+    --warn-tint: rgb(240 180 88 / 0.12);
+    --warn-mark: #c48528;
+    --on-warn: #1a1206;
+    --danger: #f87171;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+    --shadow-raised: 0 10px 30px rgb(0 0 0 / 0.5);
+    --shadow-segment: 0 1px 2px rgb(0 0 0 / 0.4);
+    --header-bg: rgb(17 19 21 / 0.92);
+    --on-accent: #04201c;
+    --chart: #0fa596;
+    --chart-area: rgb(15 165 150 / 0.14);
+    --toast-bg: #eef1f3;
+    --toast-text: #111315;
+    --toast-action: #0b5f58;
+    --toast-action-border: rgb(17 19 21 / 0.3);
+    --overlay: rgb(0 0 0 / 0.55);
+    color-scheme: dark;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -69,6 +124,6 @@ a { color: var(--accent); }
   border: 0;
   border-radius: 999px;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   font: inherit;
 }
