@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { AiDiagnostic, User } from './lib/cloudflare'
 import './App.css'
-import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, loadScheduleRevision, savePlanSnapshot, saveScheduleSnapshot, supabase, supabaseUrl } from './lib/cloudflare'
-import { habitStats, isDueOn, pinItemsToDates, swapScheduleDates } from './lib/schedule'
+import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, loadScheduleRevision, savePlanSnapshot, saveScheduleChanges, saveScheduleSnapshot, supabase, supabaseUrl } from './lib/cloudflare'
+import { diffScheduleRows, fingerprintScheduleRows, habitStats, isDueOn, pinItemsToDates, scheduleChangeCount, swapScheduleDates } from './lib/schedule'
+import type { ScheduleRowFingerprint, ScheduleRowSet } from './lib/schedule'
 
 type TK = 'exercise' | 'habit'
 type TT = 'count' | 'sets' | 'duration' | 'distance' | 'for-time' | 'weighted'
@@ -933,6 +934,50 @@ function sanitizeRepeatDays(value: unknown): number[] {
   return [...new Set(value.filter((entry): entry is number => Number.isInteger(entry) && entry >= 0 && entry <= 6))].sort((a, b) => a - b)
 }
 
+function buildScheduleRows(schedule: Day[], runs: Run[], logs: Log[], userId: string, validPlanIds: Set<string>): ScheduleRowSet {
+  return {
+    runs: runs.map((run) => ({
+      id: run.id,
+      user_id: userId,
+      plan_id: run.planId && validPlanIds.has(run.planId) ? run.planId : null,
+      start_date: run.startDate,
+      name: run.name,
+      status: run.status,
+      completed_at: run.completedAt ?? null,
+    })),
+    days: schedule.map((day0) => ({
+      id: scheduleDayId(day0.date),
+      user_id: userId,
+      date: day0.date,
+      notes: day0.notes,
+      skipped: day0.skipped,
+      run_id: day0.runId ?? null,
+      day_no: day0.dayNo ?? null,
+    })),
+    items: schedule.flatMap((day0) => day0.items.map((item) => ({
+      id: item.id,
+      user_id: userId,
+      schedule_day_id: scheduleDayId(day0.date),
+      exercise_id: item.exerciseId,
+      type: item.type,
+      target: item.target,
+      ref: item.ref,
+      done: item.done,
+      result: item.result,
+    }))),
+    logs: logs.map((entry) => ({
+      id: entry.id,
+      user_id: userId,
+      source_item_id: entry.sourceItemId ?? null,
+      exercise_id: entry.exerciseId,
+      date: entry.date,
+      type: entry.type,
+      target: entry.target,
+      result: entry.result,
+    })),
+  }
+}
+
 function exerciseRow(exercise: Exercise, userId: string) {
   return {
     id: exercise.id,
@@ -1151,6 +1196,13 @@ export default function App() {
   const scheduleSaveTimerRef = useRef<number | null>(null)
   const scheduleLoadRevisionRef = useRef(0)
   const scheduleServerRevisionRef = useRef(0)
+  // What the server holds as of the last load or successful save, so saves can send only the difference.
+  const savedScheduleRowsRef = useRef<ScheduleRowFingerprint | null>(null)
+  const changesEndpointMissingRef = useRef(false)
+  // Saves run one at a time; two overlapping saves would both claim the same revision and the second would 409.
+  const scheduleSaveChainRef = useRef<Promise<unknown>>(Promise.resolve())
+  const serverExerciseIdsRef = useRef(new Set<string>())
+  const serverPlanIdsRef = useRef(new Set<string>())
   const scheduleTouchHoldRef = useRef<number | null>(null)
   const scheduleTouchDragRef = useRef<ScheduleTouchDrag | null>(null)
   const scheduleCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -1541,6 +1593,7 @@ export default function App() {
         return false
       }
     }
+    serverExerciseIdsRef.current = new Set(exerciseRows.map((row) => row.id))
     return true
   }, [user])
   const ensureScheduleDependencies = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
@@ -1552,7 +1605,7 @@ export default function App() {
       ...nextLogs.map((entry) => entry.exerciseId),
     ])
     const exercisesToEnsure = state.exercises
-      .filter((exercise) => requiredExerciseIds.has(exercise.id))
+      .filter((exercise) => requiredExerciseIds.has(exercise.id) && !serverExerciseIdsRef.current.has(exercise.id))
       .map((exercise) => exerciseRow(exercise, user.id))
 
     if (exercisesToEnsure.length) {
@@ -1561,11 +1614,12 @@ export default function App() {
         console.error('schedule dependency exercise upsert failed', error)
         return false
       }
+      exercisesToEnsure.forEach((row) => serverExerciseIdsRef.current.add(row.id))
     }
 
     const requiredPlanIds = new Set(nextRuns.map((run) => run.planId).filter(Boolean))
     const plansToEnsure = availablePlans
-      .filter((plan0) => requiredPlanIds.has(plan0.id))
+      .filter((plan0) => requiredPlanIds.has(plan0.id) && !serverPlanIdsRef.current.has(plan0.id))
       .map((plan0) => ({
         id: plan0.id,
         user_id: user.id,
@@ -1579,6 +1633,7 @@ export default function App() {
         console.error('schedule dependency plan upsert failed', error)
         return false
       }
+      plansToEnsure.forEach((row) => serverPlanIdsRef.current.add(row.id))
     }
 
     return true
@@ -1613,77 +1668,57 @@ export default function App() {
       }))))
     try {
       await savePlanSnapshot({ plans: planRows, days: dayRows, items: itemRows })
+      serverPlanIdsRef.current = new Set(planRows.map((row) => row.id))
       return true
     } catch (error) {
       console.error('plan snapshot save failed', error)
       return false
     }
   }, [user])
-  const persistScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans) => {
+  const writeScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[], mode: 'changes' | 'full') => {
     if (!supabase || !user) return true
 
     const dependenciesReady = await ensureScheduleDependencies(nextSchedule, nextRuns, nextLogs, availablePlans)
     if (!dependenciesReady) return false
 
-    const validPlanIds = new Set(availablePlans.map((plan0) => plan0.id))
-    const runRows = nextRuns.map((run) => ({
-      id: run.id,
-      user_id: user.id,
-      plan_id: run.planId && validPlanIds.has(run.planId) ? run.planId : null,
-      start_date: run.startDate,
-      name: run.name,
-      status: run.status,
-      completed_at: run.completedAt ?? null,
-    }))
-    const dayRows = nextSchedule.map((day0) => ({
-      id: scheduleDayId(day0.date),
-      user_id: user.id,
-      date: day0.date,
-      notes: day0.notes,
-      skipped: day0.skipped,
-      run_id: day0.runId ?? null,
-      day_no: day0.dayNo ?? null,
-    }))
-    const itemRows = nextSchedule.flatMap((day0) => day0.items.map((item) => ({
-      id: item.id,
-      user_id: user.id,
-      schedule_day_id: scheduleDayId(day0.date),
-      exercise_id: item.exerciseId,
-      type: item.type,
-      target: item.target,
-      ref: item.ref,
-      done: item.done,
-      result: item.result,
-    })))
-    const logRows = nextLogs.map((entry) => ({
-      id: entry.id,
-      user_id: user.id,
-      source_item_id: entry.sourceItemId ?? null,
-      exercise_id: entry.exerciseId,
-      date: entry.date,
-      type: entry.type,
-      target: entry.target,
-      result: entry.result,
-    }))
-
+    const rows = buildScheduleRows(nextSchedule, nextRuns, nextLogs, user.id, new Set(availablePlans.map((plan0) => plan0.id)))
+    const saved = savedScheduleRowsRef.current
     setScheduleSaveStatus('saving')
     try {
-      scheduleServerRevisionRef.current = await saveScheduleSnapshot({
-        expectedRevision: scheduleServerRevisionRef.current,
-        runs: runRows,
-        days: dayRows,
-        items: itemRows,
-        logs: logRows,
-      })
+      let written = false
+      if (mode === 'changes' && saved && !changesEndpointMissingRef.current) {
+        const changes = diffScheduleRows(saved, rows)
+        if (scheduleChangeCount(changes) === 0) {
+          setScheduleSaveStatus('saved')
+          return true
+        }
+        try {
+          scheduleServerRevisionRef.current = await saveScheduleChanges({ expectedRevision: scheduleServerRevisionRef.current, ...changes })
+          written = true
+        } catch (error) {
+          // An API that predates incremental saves answers 404; fall back to a full snapshot until it's redeployed.
+          if ((error as { context?: Response }).context?.status !== 404) throw error
+          changesEndpointMissingRef.current = true
+        }
+      }
+      if (!written) {
+        scheduleServerRevisionRef.current = await saveScheduleSnapshot({ expectedRevision: scheduleServerRevisionRef.current, ...rows })
+      }
+      savedScheduleRowsRef.current = fingerprintScheduleRows(rows)
       setScheduleSaveStatus('saved')
       return true
     } catch (error) {
       const status = (error as { context?: Response }).context?.status
       setScheduleSaveStatus(status === 409 ? 'conflict' : 'error')
-      console.error('schedule snapshot save failed', error)
+      console.error('schedule save failed', error)
       return false
     }
-  }, [ensureScheduleDependencies, state.plans, user])
+  }, [ensureScheduleDependencies, user])
+  const persistScheduleData = useCallback((nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[] = state.plans, mode: 'changes' | 'full' = 'changes') => {
+    const run = scheduleSaveChainRef.current.then(() => writeScheduleData(nextSchedule, nextRuns, nextLogs, availablePlans, mode))
+    scheduleSaveChainRef.current = run.catch(() => undefined)
+    return run
+  }, [state.plans, writeScheduleData])
   const commitPlans = async (
     nextPlans: Plan[],
     options?: { selectedPlanId?: string | null; changedPlanIds?: string[]; deletedPlanIds?: string[] },
@@ -1758,7 +1793,7 @@ export default function App() {
     const exercisesOk = await persistExercisesCollection(normalized.exercises)
     const deletedPlanIds = state.plans.map((plan0) => plan0.id).filter((id0) => !normalized.plans.some((plan0) => plan0.id === id0))
     const plansOk = exercisesOk ? await persistPlans(normalized.plans, { changedPlanIds: normalized.plans.map((plan0) => plan0.id), deletedPlanIds }) : false
-    const scheduleOk = plansOk ? await persistScheduleData(normalized.schedule, normalized.runs, normalized.logs, normalized.plans) : false
+    const scheduleOk = plansOk ? await persistScheduleData(normalized.schedule, normalized.runs, normalized.logs, normalized.plans, 'full') : false
     if (!exercisesOk || !plansOk || !scheduleOk) {
       pushToast('Could not replace app data.')
       return false
@@ -1785,6 +1820,7 @@ export default function App() {
         const payload = starterExercises.map((exercise) => exerciseRow(exercise, user.id))
         const { error: seedError } = await client.from('exercises').upsert(payload)
         if (seedError || !active || authUserRef.current !== ownerId) return
+        serverExerciseIdsRef.current = new Set(payload.map((row) => row.id))
         setState((current) => ({ ...current, exercises: starterExercises }))
         setSelectedExerciseId((current) => current ?? starterExercises[0]?.id ?? null)
         setExerciseEditorMode((current) => current === 'new' ? current : (starterExercises[0] ? 'existing' : 'new'))
@@ -1794,6 +1830,7 @@ export default function App() {
 
       const remoteExercises = data.map(mapExerciseRow)
       if (authUserRef.current !== ownerId) return
+      serverExerciseIdsRef.current = new Set(remoteExercises.map((exercise) => exercise.id))
       setState((current) => ({ ...current, exercises: remoteExercises }))
       setSelectedExerciseId((current) => current && remoteExercises.some((exercise) => exercise.id === current) ? current : remoteExercises[0]?.id ?? null)
       setExerciseEditorMode((current) => current === 'new' ? current : (remoteExercises[0] ? 'existing' : 'new'))
@@ -1838,6 +1875,7 @@ export default function App() {
 
       const remotePlans = mapPlanRows(planRows, dayRows, itemRows)
       if (authUserRef.current !== ownerId) return
+      serverPlanIdsRef.current = new Set(remotePlans.map((plan0) => plan0.id))
       const activePlan = selectedPlanId ? remotePlans.find((plan0) => plan0.id === selectedPlanId) ?? remotePlans[0] ?? null : remotePlans[0] ?? null
       setState((current) => ({ ...current, plans: remotePlans }))
       setSelectedPlanId(activePlan?.id ?? null)
@@ -1886,6 +1924,8 @@ export default function App() {
       const remoteSchedule = mapScheduleRows(dayRows, itemRows)
       const remoteLogs = mapLogRows(logRows)
       if (authUserRef.current !== ownerId || scheduleLoadRevisionRef.current !== syncRevision) return
+      const storedPlanIds = new Set(remoteRuns.map((run) => run.planId).filter((planId): planId is string => Boolean(planId)))
+      savedScheduleRowsRef.current = fingerprintScheduleRows(buildScheduleRows(remoteSchedule.map(normalizeScheduleDay), remoteRuns, remoteLogs, ownerId, storedPlanIds))
       setState((current) => ({ ...current, runs: remoteRuns, schedule: remoteSchedule, logs: remoteLogs }))
     }
 
@@ -1937,6 +1977,9 @@ export default function App() {
   const signOut = async () => {
     if (!supabase) return
     authUserRef.current = null
+    savedScheduleRowsRef.current = null
+    serverExerciseIdsRef.current = new Set()
+    serverPlanIdsRef.current = new Set()
     setUser(null)
     loadWorkspaceState(signedOutState())
     const { error } = await supabase.auth.signOut()
@@ -2946,6 +2989,7 @@ export default function App() {
         pushToast('Could not save item.')
         return
       }
+      serverExerciseIdsRef.current.add(nextExercise.id)
     }
 
     setState((s) => ({
@@ -2996,7 +3040,8 @@ export default function App() {
     : { count: totalCount(target) }
   const habitMeta = (habit: Exercise, type: TT, target: Target) => {
     const minutes = type === 'duration' && target.seconds !== undefined && target.seconds % 60 === 0 ? target.seconds / 60 : undefined
-    const parts = [minutes !== undefined ? `${minutes} min` : workoutSummary(type, target)]
+    const times = type === 'count' && target.countUnit !== 'steps' ? totalCount(target) : undefined
+    const parts = [minutes !== undefined ? `${minutes} min` : times !== undefined ? `${times} time${times === 1 ? '' : 's'}` : workoutSummary(type, target)]
     if (habit.repeatDays?.length) {
       const stats = habitStats(habit.repeatDays, habitDoneDates.get(habit.id) ?? new Set(), today)
       if (stats.streak > 1) parts.push(`${stats.streak}-day streak`)

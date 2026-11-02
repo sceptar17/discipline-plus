@@ -191,6 +191,12 @@ type ScheduleSnapshotRequest = {
   logs?: unknown
 }
 
+type ScheduleChangesRequest = {
+  expectedRevision?: unknown
+  upserts?: { runs?: unknown; days?: unknown; items?: unknown; logs?: unknown }
+  deletes?: { runs?: unknown; days?: unknown; items?: unknown; logs?: unknown }
+}
+
 type PlanSnapshotRequest = {
   plans?: unknown
   days?: unknown
@@ -875,6 +881,92 @@ async function saveScheduleSnapshot(request: Request, user: AuthenticatedUser, e
     ...days.map((row) => conditionalSnapshotUpsert('schedule_days', row, user, expectedRevision, env)),
     ...items.map((row) => conditionalSnapshotUpsert('schedule_items', row, user, expectedRevision, env)),
     ...logs.map((row) => conditionalSnapshotUpsert('logs', row, user, expectedRevision, env)),
+    env.DB.prepare(`UPDATE schedule_versions
+      SET revision = revision + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE user_id = ? AND revision = ?`).bind(user.id, expectedRevision),
+  ]
+  const results = await env.DB.batch(statements)
+  const revisionResult = results.at(-1)
+  if (!revisionResult?.success || revisionResult.meta.changes !== 1) {
+    throw new HttpError(409, 'The schedule changed in another tab or device. Reload before saving again.')
+  }
+  return json({ revision: expectedRevision + 1 })
+}
+
+function deleteIds(value: unknown, label: string) {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > 4000 || value.some((entry) => typeof entry !== 'string' || !entry)) {
+    throw new HttpError(400, `Invalid ${label} deletes.`)
+  }
+  return [...new Set(value as string[])]
+}
+
+/** Every non-empty `column` value must be in `allowed` (rows saved in this same request) or already owned by the user. */
+async function verifyReferences(rows: Record<string, unknown>[], column: string, parent: ScheduleSnapshotTable, allowed: Set<unknown>, user: AuthenticatedUser, env: Env) {
+  const ids = [...new Set(rows.map((row) => row[column]).filter((value): value is string => typeof value === 'string' && Boolean(value) && !allowed.has(value)))]
+  for (let offset = 0; offset < ids.length; offset += 90) {
+    const chunk = ids.slice(offset, offset + 90)
+    const result = await env.DB.prepare(`SELECT id FROM ${parent} WHERE user_id = ? AND id IN (${chunk.map(() => '?').join(', ')})`)
+      .bind(user.id, ...chunk)
+      .all<{ id: string }>()
+    const found = new Set(result.results.map((row) => row.id))
+    if (chunk.some((entry) => !found.has(entry))) throw new HttpError(400, `Invalid ${column} reference.`)
+  }
+}
+
+/**
+ * Applies only the rows that changed since the client's last save. Upserts run parents-first, then deletes
+ * children-first, so items moved to a new day are re-pointed before their old day is removed. Every statement
+ * is conditioned on the expected revision, so a stale client changes nothing and gets a 409.
+ */
+async function saveScheduleChanges(request: Request, user: AuthenticatedUser, env: Env) {
+  requireBoundedJsonRequest(request, 4_000_000)
+  const body = await request.json<ScheduleChangesRequest>()
+  const expectedRevision = Number(body.expectedRevision)
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 0) throw new HttpError(400, 'A valid schedule revision is required.')
+  const upserts = isRecord(body.upserts) ? body.upserts : {}
+  const deletes = isRecord(body.deletes) ? body.deletes : {}
+  const runs = snapshotRows(upserts.runs ?? [], 200, 'run')
+  const days = snapshotRows(upserts.days ?? [], 800, 'schedule day')
+  const items = snapshotRows(upserts.items ?? [], 2400, 'schedule item')
+  const logs = snapshotRows(upserts.logs ?? [], 4000, 'workout log')
+  const deleted = {
+    logs: deleteIds(deletes.logs, 'log'),
+    schedule_items: deleteIds(deletes.items, 'schedule item'),
+    schedule_days: deleteIds(deletes.days, 'schedule day'),
+    runs: deleteIds(deletes.runs, 'run'),
+  }
+  const upsertCount = runs.length + days.length + items.length + logs.length
+  if (upsertCount > 5000) throw new HttpError(413, 'Too many schedule changes to save at once.')
+
+  await env.DB.prepare('INSERT INTO schedule_versions (user_id, revision) VALUES (?, 0) ON CONFLICT(user_id) DO NOTHING')
+    .bind(user.id)
+    .run()
+
+  await verifyOwnedForeignKeys('runs', runs, user, env)
+  await verifyOwnedForeignKeys('schedule_items', items, user, env, new Set(['schedule_day_id']))
+  await verifyOwnedForeignKeys('logs', logs, user, env, new Set(['source_item_id']))
+  await verifyReferences(days, 'run_id', 'runs', new Set(runs.map((row) => row.id)), user, env)
+  if (items.some((row) => typeof row.schedule_day_id !== 'string' || !row.schedule_day_id)) throw new HttpError(400, 'Invalid schedule_day_id reference.')
+  await verifyReferences(items, 'schedule_day_id', 'schedule_days', new Set(days.map((row) => row.id)), user, env)
+  await verifyReferences(logs, 'source_item_id', 'schedule_items', new Set(items.map((row) => row.id)), user, env)
+
+  const revisionGuard = 'EXISTS (SELECT 1 FROM schedule_versions WHERE user_id = ? AND revision = ?)'
+  const deleteStatements = (Object.entries(deleted) as Array<[ScheduleSnapshotTable, string[]]>).flatMap(([tableName, ids]) => {
+    const statements: D1PreparedStatement[] = []
+    for (let offset = 0; offset < ids.length; offset += 90) {
+      const chunk = ids.slice(offset, offset + 90)
+      statements.push(env.DB.prepare(`DELETE FROM ${tableName} WHERE user_id = ? AND id IN (${chunk.map(() => '?').join(', ')}) AND ${revisionGuard}`)
+        .bind(user.id, ...chunk, user.id, expectedRevision))
+    }
+    return statements
+  })
+  const statements: D1PreparedStatement[] = [
+    ...runs.map((row) => conditionalSnapshotUpsert('runs', row, user, expectedRevision, env)),
+    ...days.map((row) => conditionalSnapshotUpsert('schedule_days', row, user, expectedRevision, env)),
+    ...items.map((row) => conditionalSnapshotUpsert('schedule_items', row, user, expectedRevision, env)),
+    ...logs.map((row) => conditionalSnapshotUpsert('logs', row, user, expectedRevision, env)),
+    ...deleteStatements,
     env.DB.prepare(`UPDATE schedule_versions
       SET revision = revision + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       WHERE user_id = ? AND revision = ?`).bind(user.id, expectedRevision),
@@ -1736,6 +1828,7 @@ async function handleApi(request: Request, env: Env) {
   if (request.method === 'POST' && url.pathname === '/api/database') return handleDatabase(request, user, env)
   if (request.method === 'GET' && url.pathname === '/api/schedule/revision') return json({ revision: await getScheduleRevision(user, env) })
   if (request.method === 'POST' && url.pathname === '/api/schedule/snapshot') return saveScheduleSnapshot(request, user, env)
+  if (request.method === 'POST' && url.pathname === '/api/schedule/changes') return saveScheduleChanges(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/plans/snapshot') return savePlanSnapshot(request, user, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/analyze-plan-sheet') return analyzePlanSheet(request, env)
   if (request.method === 'POST' && url.pathname === '/api/functions/create-mobile-pairing') return createMobilePairing(user, env)

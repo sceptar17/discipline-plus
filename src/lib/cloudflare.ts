@@ -138,6 +138,25 @@ export async function saveScheduleSnapshot(payload: ScheduleSnapshotPayload) {
   return revision
 }
 
+export type ScheduleChangesPayload = {
+  expectedRevision: number
+  upserts: { runs: unknown[]; days: unknown[]; items: unknown[]; logs: unknown[] }
+  deletes: { runs: string[]; days: string[]; items: string[]; logs: string[] }
+}
+
+export async function saveScheduleChanges(payload: ScheduleChangesPayload) {
+  const response = await fetch(apiUrl('/api/schedule/changes'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    body: JSON.stringify(payload),
+  })
+  const body = await parseResponse(response) as { revision?: unknown } | null
+  const revision = Number(body?.revision)
+  if (!Number.isInteger(revision) || revision < 0) throw clientError('The server returned an invalid schedule revision.', response)
+  return revision
+}
+
 export async function savePlanSnapshot(payload: { plans: unknown[]; days: unknown[]; items: unknown[] }) {
   const response = await fetch(apiUrl('/api/plans/snapshot'), {
     method: 'POST',

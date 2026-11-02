@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { habitStats, isCalendarDate, isDueOn, pinItemsToDates, swapScheduleDates } from './schedule'
+import { diffScheduleRows, fingerprintScheduleRows, habitStats, isCalendarDate, isDueOn, pinItemsToDates, scheduleChangeCount, swapScheduleDates } from './schedule'
 
 describe('isCalendarDate', () => {
   it('accepts real ISO calendar dates', () => {
@@ -116,5 +116,36 @@ describe('isDueOn', () => {
     expect(isDueOn([0], '2026-11-01')).toBe(true)
     expect(isDueOn([1], '2026-11-01')).toBe(false)
     expect(isDueOn([], '2026-11-01')).toBe(false)
+  })
+})
+
+describe('diffScheduleRows', () => {
+  const base = {
+    runs: [{ id: 'run-1', name: 'Block' }],
+    days: [{ id: 'day-2026-11-02', notes: '' }],
+    items: [{ id: 'it-1', schedule_day_id: 'day-2026-11-02', done: false }],
+    logs: [],
+  }
+
+  it('sends nothing when nothing changed', () => {
+    const changes = diffScheduleRows(fingerprintScheduleRows(base), structuredClone(base))
+    expect(scheduleChangeCount(changes)).toBe(0)
+  })
+
+  it('sends only the changed item and its new log', () => {
+    const next = structuredClone(base)
+    next.items[0].done = true
+    const withLog = { ...next, logs: [{ id: 'log-it-1', source_item_id: 'it-1' }] }
+    const changes = diffScheduleRows(fingerprintScheduleRows(base), withLog)
+    expect(changes.upserts.items.map((row) => row.id)).toEqual(['it-1'])
+    expect(changes.upserts.logs.map((row) => row.id)).toEqual(['log-it-1'])
+    expect(changes.upserts.days).toEqual([])
+    expect(scheduleChangeCount(changes)).toBe(2)
+  })
+
+  it('reports removed rows as deletes', () => {
+    const changes = diffScheduleRows(fingerprintScheduleRows(base), { ...base, items: [] })
+    expect(changes.deletes.items).toEqual(['it-1'])
+    expect(changes.upserts.items).toEqual([])
   })
 })

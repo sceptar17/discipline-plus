@@ -143,3 +143,50 @@ export function habitStats(weekdays: number[] | undefined, doneDates: Set<string
   }
   return { streak, weekDone, weekDue }
 }
+
+export type ScheduleRowSet = {
+  runs: Array<Record<string, unknown> & { id: string }>
+  days: Array<Record<string, unknown> & { id: string }>
+  items: Array<Record<string, unknown> & { id: string }>
+  logs: Array<Record<string, unknown> & { id: string }>
+}
+
+export type ScheduleRowChanges = {
+  upserts: ScheduleRowSet
+  deletes: { runs: string[]; days: string[]; items: string[]; logs: string[] }
+}
+
+const SCHEDULE_ROW_TABLES = ['runs', 'days', 'items', 'logs'] as const
+
+/** Fingerprint rows by id so a later save can send only what changed. */
+export function fingerprintScheduleRows(rows: ScheduleRowSet) {
+  return Object.fromEntries(SCHEDULE_ROW_TABLES.map((table) => [
+    table,
+    new Map(rows[table].map((row) => [row.id, JSON.stringify(row)])),
+  ])) as Record<(typeof SCHEDULE_ROW_TABLES)[number], Map<string, string>>
+}
+
+export type ScheduleRowFingerprint = ReturnType<typeof fingerprintScheduleRows>
+
+/** Rows that are new or different from `saved`, and ids that disappeared. */
+export function diffScheduleRows(saved: ScheduleRowFingerprint, next: ScheduleRowSet): ScheduleRowChanges {
+  const changes: ScheduleRowChanges = {
+    upserts: { runs: [], days: [], items: [], logs: [] },
+    deletes: { runs: [], days: [], items: [], logs: [] },
+  }
+  for (const table of SCHEDULE_ROW_TABLES) {
+    const seen = new Set<string>()
+    for (const row of next[table]) {
+      seen.add(row.id)
+      if (saved[table].get(row.id) !== JSON.stringify(row)) changes.upserts[table].push(row)
+    }
+    for (const id of saved[table].keys()) {
+      if (!seen.has(id)) changes.deletes[table].push(id)
+    }
+  }
+  return changes
+}
+
+export function scheduleChangeCount(changes: ScheduleRowChanges) {
+  return SCHEDULE_ROW_TABLES.reduce((total, table) => total + changes.upserts[table].length + changes.deletes[table].length, 0)
+}
