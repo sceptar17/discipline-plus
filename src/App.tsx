@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import type { AiDiagnostic, User } from './lib/cloudflare'
 import './App.css'
 import './theme.css'
-import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, loadScheduleRevision, savePlanSnapshot, saveScheduleChanges, saveScheduleSnapshot, supabase, supabaseUrl } from './lib/cloudflare'
+import { hasSupabaseEnv, loadAiDiagnostics, loadCoachDay, loadHealthSyncStatus, loadProgramCoach, checkReachability, loadScheduleRevision, savePlanSnapshot, saveScheduleChanges, startSignIn, saveScheduleSnapshot, supabase, supabaseUrl } from './lib/cloudflare'
 import { diffScheduleRows, fingerprintScheduleRows, habitStats, isDueOn, pinItemsToDates, scheduleChangeCount, swapScheduleDates } from './lib/schedule'
 import type { ScheduleRowFingerprint, ScheduleRowSet } from './lib/schedule'
 import type { Sex } from './lib/standards'
@@ -29,6 +29,7 @@ const profileDraftFrom = (profile: CoachProfile): ProfileDraft => ({
 })
 
 const KEY = 'fitness-tracker-v1'
+const PENDING_CHANGES_KEY = 'discipline-plus-pending-changes'
 const HEALTH_SYNC_DATE_KEY = 'discipline-plus-health-sync-date'
 const APP_TABS = ['schedule', 'progress', 'plans', 'calendar', 'exercises', 'coach', 'settings'] as const
 const PLAN_TABS = ['plans', 'calendar', 'exercises'] as const
@@ -1039,6 +1040,7 @@ export default function App() {
   const [applyPlanSaving, setApplyPlanSaving] = useState(false)
   const [keepCompletedPlanDays, setKeepCompletedPlanDays] = useState(true)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [pendingReplayNotice, setPendingReplayNotice] = useState('')
   const [daySheet, setDaySheet] = useState<null | { mode: 'add'; kind: TK } | { mode: 'actions' }>(null)
   const [pickerQuery, setPickerQuery] = useState('')
   const [libraryEditorOpen, setLibraryEditorOpen] = useState(false)
@@ -1060,6 +1062,9 @@ export default function App() {
   // What the server holds as of the last load or successful save, so saves can send only the difference.
   const savedScheduleRowsRef = useRef<ScheduleRowFingerprint | null>(null)
   const changesEndpointMissingRef = useRef(false)
+  // Set when saves can't reach the server (offline or signed out); edits are kept locally until they can.
+  const saveBlockedRef = useRef<null | 'signin' | 'offline'>(null)
+  const replayedPendingRef = useRef(false)
   // Saves run one at a time; two overlapping saves would both claim the same revision and the second would 409.
   const scheduleSaveChainRef = useRef<Promise<unknown>>(Promise.resolve())
   const serverExerciseIdsRef = useRef(new Set<string>())
@@ -1611,8 +1616,18 @@ export default function App() {
   const writeScheduleData = useCallback(async (nextSchedule: Day[], nextRuns: Run[], nextLogs: Log[], availablePlans: Plan[], mode: 'changes' | 'full') => {
     if (!supabase || !user) return true
 
+    const blockedBy = async () => {
+      const reach = await checkReachability()
+      if (reach === 'ok') return false
+      saveBlockedRef.current = reach
+      setScheduleSaveStatus(reach)
+      return true
+    }
     const dependenciesReady = await ensureScheduleDependencies(nextSchedule, nextRuns, nextLogs, availablePlans)
-    if (!dependenciesReady) return false
+    if (!dependenciesReady) {
+      if (!(await blockedBy())) setScheduleSaveStatus('error')
+      return false
+    }
 
     const rows = buildScheduleRows(nextSchedule, nextRuns, nextLogs, user.id, new Set(availablePlans.map((plan0) => plan0.id)))
     const saved = savedScheduleRowsRef.current
@@ -1638,12 +1653,14 @@ export default function App() {
         scheduleServerRevisionRef.current = await saveScheduleSnapshot({ expectedRevision: scheduleServerRevisionRef.current, ...rows })
       }
       savedScheduleRowsRef.current = fingerprintScheduleRows(rows)
+      saveBlockedRef.current = null
       setScheduleSaveStatus('saved')
       return true
     } catch (error) {
       const status = (error as { context?: Response }).context?.status
-      setScheduleSaveStatus(status === 409 ? 'conflict' : 'error')
       console.error('schedule save failed', error)
+      if (status === 409) setScheduleSaveStatus('conflict')
+      else if (status !== undefined || !(await blockedBy())) setScheduleSaveStatus('error')
       return false
     }
   }, [ensureScheduleDependencies, user])
@@ -1687,7 +1704,7 @@ export default function App() {
 
     scheduleSaveTimerRef.current = window.setTimeout(() => {
       void persistScheduleData(nextSchedule, nextRuns, nextLogs, nextPlans).then((ok) => {
-        if (!ok) {
+        if (!ok && !saveBlockedRef.current) {
           pushToast('Could not save schedule.')
         }
       })
@@ -1710,6 +1727,11 @@ export default function App() {
         scheduleSaveTimerRef.current = null
       }
       const ok = await persistScheduleData(normalizedSchedule, nextRuns, nextLogs, state.plans)
+      if (!ok && saveBlockedRef.current) {
+        // Keep the edit on screen; it saves after signing in or reconnecting.
+        pushToast(saveBlockedRef.current === 'signin' ? 'Your sign-in expired. Your change is kept — tap “Sign in to save” at the top.' : 'You’re offline. Your change is kept and saves when you reconnect.')
+        return true
+      }
       if (!ok) {
         localScheduleRef.current = previous
         setState((current) => ({ ...current, schedule: previous.schedule, runs: previous.runs, logs: previous.logs }))
@@ -1857,6 +1879,28 @@ export default function App() {
       if (authUserRef.current !== ownerId || scheduleLoadRevisionRef.current !== syncRevision) return
       const storedPlanIds = new Set(remoteRuns.map((run) => run.planId).filter((planId): planId is string => Boolean(planId)))
       savedScheduleRowsRef.current = fingerprintScheduleRows(buildScheduleRows(remoteSchedule.map(normalizeScheduleDay), remoteRuns, remoteLogs, ownerId, storedPlanIds))
+      let pendingRaw: string | null = null
+      try {
+        pendingRaw = sessionStorage.getItem(PENDING_CHANGES_KEY)
+        sessionStorage.removeItem(PENDING_CHANGES_KEY)
+      } catch {
+        pendingRaw = null
+      }
+      if (pendingRaw && !replayedPendingRef.current) {
+        replayedPendingRef.current = true
+        try {
+          const pending = JSON.parse(pendingRaw) as { at: number; userId: string; changes: Parameters<typeof saveScheduleChanges>[0] }
+          if (pending.userId === ownerId && Date.now() - pending.at < 86400000) {
+            scheduleServerRevisionRef.current = await saveScheduleChanges({ ...pending.changes, expectedRevision: serverRevision })
+            setPendingReplayNotice('Saved the change you made before signing in.')
+            if (active) void syncSchedule()
+            return
+          }
+        } catch (error) {
+          console.error('replaying unsaved changes failed', error)
+          setPendingReplayNotice('Couldn’t save the change from before you signed in. Please redo it.')
+        }
+      }
       setState((current) => ({ ...current, runs: remoteRuns, schedule: remoteSchedule, logs: remoteLogs }))
     }
 
@@ -1887,6 +1931,29 @@ export default function App() {
     window.setTimeout(() => planDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
   }
   const userAvatar = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null
+  // Remember unsaved edits across the sign-in redirect; they're replayed once the schedule reloads.
+  const signInToSave = () => {
+    const saved = savedScheduleRowsRef.current
+    if (saved && user) {
+      const current = localScheduleRef.current
+      const changes = diffScheduleRows(saved, buildScheduleRows(current.schedule, current.runs, current.logs, user.id, new Set(state.plans.map((plan0) => plan0.id))))
+      if (scheduleChangeCount(changes) > 0) {
+        try {
+          sessionStorage.setItem(PENDING_CHANGES_KEY, JSON.stringify({ at: Date.now(), userId: user.id, changes }))
+        } catch (error) {
+          console.error('could not keep unsaved changes', error)
+        }
+      }
+    }
+    startSignIn()
+  }
+  useEffect(() => {
+    const onOnline = () => {
+      if (saveBlockedRef.current === 'offline') void retryScheduleSave()
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  })
   const retryScheduleSave = async () => {
     const current = localScheduleRef.current
     const ok = await persistScheduleData(current.schedule, current.runs, current.logs, state.plans)
@@ -3162,6 +3229,11 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!pendingReplayNotice) return
+    pushToast(pendingReplayNotice)
+    setPendingReplayNotice('')
+  }, [pendingReplayNotice])
+  useEffect(() => {
     undoActionsRef.current = {
       restoreItem: restoreItemOnDate,
       putItem: putItemOnDate,
@@ -3184,10 +3256,10 @@ export default function App() {
               className={`saveIndicator ${scheduleSaveStatus}`}
               type="button"
               aria-live="polite"
-              onClick={() => scheduleSaveStatus === 'conflict' ? window.location.reload() : scheduleSaveStatus === 'error' ? void retryScheduleSave() : undefined}
+              onClick={() => scheduleSaveStatus === 'conflict' ? window.location.reload() : scheduleSaveStatus === 'signin' ? signInToSave() : scheduleSaveStatus === 'error' || scheduleSaveStatus === 'offline' ? void retryScheduleSave() : undefined}
               disabled={scheduleSaveStatus === 'saving' || scheduleSaveStatus === 'saved'}
               title={scheduleSaveStatus === 'conflict' ? 'Reload to reconcile changes from another tab or device.' : scheduleSaveStatus === 'error' ? 'Retry saving.' : undefined}
-            >{{ saving: 'Saving…', saved: 'Saved', error: 'Save failed · Retry', conflict: 'Changed elsewhere · Reload', idle: '' }[scheduleSaveStatus]}</button>}
+            >{{ saving: 'Saving…', saved: 'Saved', error: 'Save failed · Retry', conflict: 'Changed elsewhere · Reload', signin: 'Sign in to save', offline: 'Offline · Retry', idle: '' }[scheduleSaveStatus]}</button>}
             {hasSupabaseEnv && !user && !authLoading && <button className="pill authButton" onClick={signInWithGoogle}>Sign in</button>}
             {hasSupabaseEnv && user ? <button className={tab === 'settings' ? 'avatarButton activeAvatar' : 'avatarButton'} onClick={() => openTab('settings')} aria-label="Settings and profile">
               {userAvatar ? <img src={userAvatar} alt="" className="avatarImage" /> : <span className="avatarFallback">{(user.email ?? 'U').slice(0, 1).toUpperCase()}</span>}

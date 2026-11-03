@@ -273,6 +273,24 @@ class QueryBuilder implements PromiseLike<QueryResult> {
   }
 }
 
+/**
+ * After a request fails without any HTTP response, work out why. The API lives on another origin, so an
+ * expired Cloudflare Access sign-in shows up as a blocked redirect (a network error), not a 401.
+ */
+export async function checkReachability(): Promise<'ok' | 'signin' | 'offline'> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline'
+  try {
+    const response = await fetch(apiUrl('/api/auth/session'), { credentials: 'include' })
+    return response.status === 401 || response.status === 403 ? 'signin' : 'ok'
+  } catch {
+    return typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'signin'
+  }
+}
+
+export function startSignIn() {
+  window.location.assign(apiUrl(`/api/auth/login?returnTo=${encodeURIComponent(window.location.href)}`))
+}
+
 async function getSessionUser(): Promise<User | null> {
   const response = await fetch(apiUrl('/api/auth/session'), { credentials: 'include' })
   if (response.status === 401 || response.status === 403) return null

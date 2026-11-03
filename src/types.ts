@@ -37,7 +37,7 @@ export type UndoActions = {
   swapDays: (sourceDate: string, targetDate: string, quiet?: boolean) => Promise<unknown>
 }
 export type Toast = { id: string; message: string; createdAt: number; action?: { label: string; run: () => void } }
-export type ScheduleSaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
+export type ScheduleSaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict' | 'signin' | 'offline'
 export type ItemDraft = { type: TT; target: Target; timeText: string; weightText: string; countText: string; setRepsText: string; difficulty: '' | EffortRating; note: string }
 export type DailyHealthDraft = { calories: string; protein: string; carbs: string; fat: string; steps: string; weight: string }
 export type MobilePairing = { code: string; expiresAt: string; syncUrl: string }
