@@ -36,7 +36,7 @@ export function powerBlockSetting(weight: number | undefined): PowerBlockSetting
   const exact = Math.abs(rounded - weight) < 0.01
   if (rounded <= 10) {
     const adders = ((rounded - 5) / 2.5) as 0 | 1 | 2
-    return { weight: rounded, rail: null, adders, exact, label: adders ? `Handle + ${adders} adder${adders === 1 ? '' : 's'}` : 'Handle only' }
+    return { weight: rounded, rail: null, adders, exact, label: 'Handle' }
   }
   // Each rail adds 5 lb over the one below it; 2 adders reach the next multiple of 5, 1 adder the half step.
   const adders: 1 | 2 = rounded % 5 === 0 ? 2 : 1
@@ -44,5 +44,6 @@ export function powerBlockSetting(weight: number | undefined): PowerBlockSetting
   const rail = POWERBLOCK_RAILS[railIndex]
   // The chart has two black rails; say which one.
   const name = rail.name === 'Black' ? (railIndex === 0 ? 'Black (first)' : 'Black (last)') : rail.name
-  return { weight: rounded, rail, adders, exact, label: `${name} + ${adders} adder${adders === 1 ? '' : 's'}` }
+  // Just the rail color; the adders are left to you.
+  return { weight: rounded, rail, adders, exact, label: name }
 }

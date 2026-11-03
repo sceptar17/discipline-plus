@@ -3972,7 +3972,7 @@ export default function App() {
                 </div></div>
               </div>
               <label className="field"><span>Lifting since <small className="mutedCopy">(optional)</small></span><input type="month" max={today.slice(0, 7)} value={profileDraft.trainingSince} onChange={(e) => setProfileDraft((x) => ({ ...x, trainingSince: e.target.value }))} /><small className="mutedCopy">Sets which strength level is on track for you. Leave blank to use your first logged workout.</small></label>
-              <label className="checkRow"><input type="checkbox" checked={profileDraft.powerblockColors} onChange={(e) => setProfileDraft((x) => ({ ...x, powerblockColors: e.target.checked }))} /><span><strong>Show PowerBlock colors</strong><small>A colored dot next to dumbbell exercises shows which rail and adders to use.</small></span></label>
+              <label className="checkRow"><input type="checkbox" checked={profileDraft.powerblockColors} onChange={(e) => setProfileDraft((x) => ({ ...x, powerblockColors: e.target.checked }))} /><span><strong>Show PowerBlock colors</strong><small>A colored dot next to dumbbell exercises shows which rail to pin.</small></span></label>
               <div className="nav"><button className="primary" onClick={() => void saveProfile()} disabled={profileSaving}>{profileSaving ? 'Saving…' : 'Save profile'}</button></div>
               <p className="mutedCopy">Body weight comes from your weigh-ins (synced or entered on Today).</p>
             </div>

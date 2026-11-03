@@ -5,24 +5,24 @@ import { ageFactor, compareToNorm, estimatedOneRepMax, expectedLevelIndex, pushU
 import type { Exercise, Log } from '../types'
 
 describe('powerBlockSetting', () => {
-  it('keeps both adders in and uses the lower rail for whole-5 weights', () => {
-    expect(powerBlockSetting(25)?.label).toBe('Purple + 2 adders')
-    expect(powerBlockSetting(20)?.label).toBe('White + 2 adders')
-    expect(powerBlockSetting(15)?.label).toBe('Black (first) + 2 adders')
-    expect(powerBlockSetting(45)?.label).toBe('Red + 2 adders')
-    expect(powerBlockSetting(50)?.label).toBe('Black (last) + 2 adders')
-    expect(powerBlockSetting(10)?.label).toBe('Handle + 2 adders')
+  it('uses the lower rail (both adders in) for whole-5 weights', () => {
+    expect(powerBlockSetting(25)?.label).toBe('Purple')
+    expect(powerBlockSetting(20)?.label).toBe('White')
+    expect(powerBlockSetting(15)?.label).toBe('Black (first)')
+    expect(powerBlockSetting(45)?.label).toBe('Red')
+    expect(powerBlockSetting(50)?.label).toBe('Black (last)')
+    expect(powerBlockSetting(10)?.label).toBe('Handle')
   })
 
-  it('uses one adder for the half steps', () => {
-    expect(powerBlockSetting(22.5)?.label).toBe('Purple + 1 adder')
-    expect(powerBlockSetting(12.5)?.label).toBe('Black (first) + 1 adder')
-    expect(powerBlockSetting(47.5)?.label).toBe('Black (last) + 1 adder')
+  it('uses the same lower rail for the half steps', () => {
+    expect(powerBlockSetting(22.5)?.label).toBe('Purple')
+    expect(powerBlockSetting(12.5)?.label).toBe('Black (first)')
+    expect(powerBlockSetting(47.5)?.label).toBe('Black (last)')
   })
 
   it('handles handle-only weights, rounding, and out-of-range', () => {
-    expect(powerBlockSetting(5)?.label).toBe('Handle only')
-    expect(powerBlockSetting(7.5)?.label).toBe('Handle + 1 adder')
+    expect(powerBlockSetting(5)?.label).toBe('Handle')
+    expect(powerBlockSetting(7.5)?.label).toBe('Handle')
     expect(powerBlockSetting(32)).toMatchObject({ weight: 32.5, exact: false, adders: 1 })
     expect(powerBlockSetting(55)).toBeNull()
     expect(powerBlockSetting(undefined)).toBeNull()
